@@ -3,10 +3,9 @@
 **A glass-box RAG agent on Cloudflare Workers — it refuses to guess, and shows you the evidence
 and the numbers either way.**
 
-> 🚧 **Status: in development.** The architecture is settled ([`docs/DESIGN.md`](docs/DESIGN.md));
-> the application is being built. Measured results replace the placeholders below when the
-> evaluation suite runs against the deployed Worker. Nothing in this README claims a number that
-> has not been measured.
+> 🚧 **Status: in development.** Grounding, refusal, and the evaluation harness are working and
+> measured; the evaluation panel in the UI is still to come. Every number below is reproducible
+> with `npm run eval:replay` against committed fixtures.
 
 ---
 
@@ -22,16 +21,51 @@ verdict on whether the answer is actually supported by those chunks, then per-st
 same code path runs headless as a committed evaluation suite, so the numbers in this README come
 from a command anyone can re-run.
 
-Two metrics are reported together, always:
+## Results
 
-| | |
-|---|---|
-| **Refusal rate** on out-of-corpus questions | should approach 100% |
-| **False-refusal rate** on in-corpus questions | should approach 0% |
+28 committed cases, τ = 0.62. Reproduce with `npm run eval:replay`.
 
-Refusal rate alone is meaningless — an agent that refuses everything scores 100%. The pair is
-what says something true, and they trade off directly against a similarity threshold that gets
-tuned against a held-out set.
+| bucket | n | refusal | false-refusal | faithfulness | hit@6 | MRR |
+|---|---|---|---|---|---|---|
+| in-corpus factual | 12 | — | **0.0%** | **1.000** | 1.000 | 0.861 |
+| out-of-corpus | 8 | **100.0%** | — | — | — | — |
+| ambiguous | 5 | — | — | 0.875 | — | — |
+| adversarial | 3 | — | 0.0% | 1.000 | 0.667 | 0.444 |
+
+Refusal rate alone is meaningless — an agent that refuses everything scores 100%. It is only
+informative next to the false-refusal rate it trades against.
+
+### The interesting result: similarity alone cannot do this
+
+There are two refusal gates — a similarity threshold, and a sentinel the model emits when the
+retrieved passages do not actually answer the question. Sweeping the threshold shows it
+contributes **nothing** to refusal quality:
+
+| τ | out-of-corpus refused | in-corpus wrongly refused |
+|---|---|---|
+| 0.45 – 0.65 | 100% | 0% |
+| 0.70 | 100% | 8.3% |
+| 0.85 | 100% | 33.3% |
+
+Because the score distributions **overlap**. The highest-scoring out-of-corpus question (0.757,
+*"what is Cloudflare's refund policy for enterprise contracts"*) outranks the lowest-scoring
+in-corpus one (0.683, *"what is an authorization code"*). No threshold separates them.
+
+At τ = 0.62, of eight out-of-corpus questions the similarity gate catches **two**; the sentinel
+gate catches **six**. A similarity-only design would have let six of eight through to
+generation and answered them.
+
+So the threshold is not a correctness control — it is a **cost** control. A similarity refusal
+costs 0.09 neurons and ~477 ms; a sentinel refusal costs a full generation, ~100 neurons and
+~4.5 s. τ is set as high as it can go without causing false refusals.
+
+### Latency by stage (p50 / p95, ms)
+
+| embed | retrieve | generate | judge | total |
+|---|---|---|---|---|
+| 309 / 497 | 18 / 30 | 1247 / 2355 | 2497 / 6628 | 3390 / 6621 |
+
+The judge dominates. It runs after the answer has fully streamed, so it never delays reading.
 
 ---
 

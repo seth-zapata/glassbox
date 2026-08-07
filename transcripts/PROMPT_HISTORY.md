@@ -23,7 +23,7 @@ categories are stripped automatically:
 | `private-planning-doc (whole tool result)` | 11 |
 | `oauth-pkce` | 4 |
 | `email-address` | 4 |
-| `cloudflare-account-id` | 1 |
+| `cloudflare-account-id` | 3 |
 
 ---
 
@@ -9081,6 +9081,451 @@ cat > tsconfig.scripts.json <<'EOF'
 ```text
 > glassbox@1.0.0 typecheck
 > wrangler types >/dev/null && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json
+```
+
+</details>
+
+Clean. Landing the pipeline:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+npm run transcript >/dev/null 2>&1
+git checkout -q -
+… [5110 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+remote: 
+https://github.com/seth-zapata/glassbox/pull/4
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+LATEST=$(gh run list --branch feat/grounding-pipelin
+… [297 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+CI exit=0
+verify	pass	25s	https://github.com/seth-zapata/glassbox/actions/runs/31217143810/job/92993204311	
+ create mode 100644 src/env.d.ts
+ create mode 100644 test/unit.test.ts
+a5f90d3 feat: grounding pipeline — corpus, retrieval, two refusal gates, judge (#4)
+6faec14 feat: day-1 skeleton — Worker, Durable Object, streaming, MIT license (#3)
+4b3216e docs: record publication, branch protection, and the PR-ref lesson (#2)
+```
+
+</details>
+
+Merged. Day 2's remaining half is the eval set and the record/replay harness — the actual differentiator. Building the eval set:
+
+```text
+⚙ Write — /home/sethz/projects/glassbox/eval/eval-set.jsonl
+```
+
+<details><summary>result</summary>
+
+```text
+File created successfully at: /home/sethz/projects/glassbox/eval/eval-set.jsonl (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+28 cases. Now the metrics module — shared by record and replay so the math is identical and unit-testable:
+
+```text
+⚙ Write — /home/sethz/projects/glassbox/src/shared/metrics.ts
+```
+
+<details><summary>result</summary>
+
+```text
+File created successfully at: /home/sethz/projects/glassbox/src/shared/metrics.ts (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+```text
+⚙ Write — /home/sethz/projects/glassbox/scripts/eval-record.ts
+```
+
+<details><summary>result</summary>
+
+```text
+File created successfully at: /home/sethz/projects/glassbox/scripts/eval-record.ts (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+```text
+⚙ Write — /home/sethz/projects/glassbox/scripts/eval-replay.ts
+```
+
+<details><summary>result</summary>
+
+```text
+File created successfully at: /home/sethz/projects/glassbox/scripts/eval-replay.ts (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+node -e "
+const fs=require('fs');const p=JSON.parse(
+… [434 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+> glassbox@1.0.0 typecheck
+> wrangler types >/dev/null && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json
+
+════ RECORD (spends neurons) ════
+
+
+Recording 28 cases against https://glassbox.glassbox.workers.dev
+  (tau = 0 — gate one disabled so the sweep has full data)
+
+  ic-01   0.831  answered f=1
+  ic-02   0.683  answered f=1
+  ic-03   0.885  answered f=1
+  ic-04   0.851  answered f=0
+  ic-05   0.797  answered f=1
+  ic-06   0.859  answered f=1
+  ic-07   0.851  answered f=1
+  ic-08   0.881  answered f=1
+  ic-09   0.886  answered f=1
+  ic-10   0.798  answered f=1
+  ic-11   0.866  answered f=1
+  ic-12   0.864  answered f=0
+  oc-01   0.570  refused:model_declined
+  oc-02   0.736  refused:model_declined
+  oc-03   0.544  refused:model_declined
+  oc-04   0.692  refused:model_declined
+  oc-05   0.756  refused:model_declined
+  oc-06   0.727  refused:model_declined
+  oc-07   0.757  refused:model_declined
+  oc-08   0.704  refused:model_declined
+  am-01   0.594  answered f=1
+  am-02   0.699  refused:model_declined
+  am-03   0.654  refused:model_declined
+  am-04   0.620  answered f=1
+  am-05   0.644  answered f=1
+  ad-01   0.838  answered f=1
+  ad-02   0.834  answered f=1
+  ad-03   0.863  answered f=1
+
+  wrote /home/sethz/projects/glassbox/eval/fixtures/latest.json  (28/28 cases, sha a5f90d3)
+  neurons spent: 2510 of 10,000/day
+```
+
+</details>
+
+All 28 recorded, 2,510 neurons. And there's a striking result already — let me run the replay to see it properly:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+npm run eval:replay 2>&1 | grep -v "^>" | tail -45
+```
+
+<details><summary>result</summary>
+
+```text
+  glassbox evaluation — replayed from fixtures (sha a5f90d3), tau = 0.62
+
+  bucket                 n   refuse%  false-refuse%  faithful   hit@6    MRR
+  ─────────────────────────────────────────────────────────────────────────
+  in_corpus_factual    12        -          0.0%     0.833   1.000  0.861
+  out_of_corpus         8   100.0%             -         -       -      -
+  ambiguous             5        -             -     1.000       -      -
+  adversarial           3        -          0.0%     1.000   0.667  0.444
+
+  latency ms      p50     p95
+  ───────────────────────────
+  embed          369    1437
+  retrieve        14      23
+  generate      1473    4297
+  judge         2879    6535
+  total         4688   10657
+
+  tau sweep      out-of-corpus refused    in-corpus wrongly refused
+  ──────────────────────────────────────────────────────────────────
+   0.45                 100.0%                      0.0%
+   0.50                 100.0%                      0.0%
+   0.55                 100.0%                      0.0%
+   0.60                 100.0%                      0.0%
+   0.65                 100.0%                      0.0%
+   0.70                 100.0%                      8.3%
+   0.75                 100.0%                      8.3%
+   0.80                 100.0%                     25.0%
+   0.85                 100.0%                     33.3%
+
+  best balanced tau: 0.45  (refuse 100.0%, false-refuse   0.0%)
+
+  28 cases · 2510 neurons at record time
+
+  no eval/floors.json — reporting only, not gating.
+```
+
+</details>
+
+Two findings here that overturn my own design assumption. Let me check the faithfulness-0 cases before writing them up:
+
+```text
+⚙ Bash — cd /home/sethz/projects/glassbox
+python3 - <<'PY'
+import json
+d=json.load(open("eval/fixtures/latest.json"))
+recs={r["case"]["id"]: r for r in d["records"]}
+for
+… [1258 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+── ic-04: How old must a domain be before it can be transferred to Cloudflare?
+   answer: According to [1], a domain must be at least 60 days old and not have been transferred in the last 60 days to be eligible for transfer to Cloudflare.
+   judge : supported=False score=0
+   why   : unparseable judge output: [unrecognised response shape] {"id":"chatcmpl-«account-id»","object":"chat.completion","created":1786135640,"model":"@cf/openai/gpt-oss-20b","choices":[{"index"
+
+── ic-12: How do domain renewals work with Cloudflare Registrar?
+   answer: Domain renewals with Cloudflare Registrar work by default with an auto-renew setting, where Cloudflare attempts to renew the domain approximately 30 days prior to expiration [1]. If the first attempt fails, several more attempts a
+   judge : supported=False score=0
+   why   : unparseable judge output: [unrecognised response shape] {"id":"chatcmpl-«account-id»","object":"chat.completion","created":1786135694,"model":"@cf/openai/gpt-oss-20b","choices":[{"index"
+
+── score separation (does any tau separate the buckets?)
+   in-corpus  min=0.683 max=0.886
+   out-corpus min=0.544 max=0.757
+   OVERLAP: True  (out-of-corpus max 0.757 vs in-corpus min 0.683)
+
+── which gate would fire at tau=0.62?
+   gate 1 (cheap, 0.09 neurons): ['oc-01', 'oc-03']
+   gate 2 (costs generation)   : ['oc-02', 'oc-04', 'oc-05', 'oc-06', 'oc-07', 'oc-08']
+```
+
+</details>
+
+Both faithfulness-0 cases are **judge parse failures, not real unfaithfulness** — same root cause recurring: gpt-oss burns its token budget on reasoning and returns `chat.completion` with empty content. 600 tokens was still too few. And the score distributions tell a bigger story:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+sed -i 's/    max_tokens: 600,/    max_tokens: 1500,
+… [392 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+96:    max_tokens: 1500,
+> wrangler types >/dev/null && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json
+
+  https://glassbox.glassbox.workers.dev
+Current Version ID: d6c40053-7a7b-4714-bb06-fa6ce0a4238f
+  waiting for propagation before re-recording…
+  health 200
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+npm run eval:record 2>&1 | grep -v "^>" | tail -36
+```
+
+<details><summary>result</summary>
+
+```text
+Recording 28 cases against https://glassbox.glassbox.workers.dev
+  (tau = 0 — gate one disabled so the sweep has full data)
+
+  ic-01   0.831  answered f=1
+  ic-02   0.683  answered f=1
+  ic-03   0.885  answered f=1
+  ic-04   0.851  answered f=1
+  ic-05   0.797  answered f=1
+  ic-06   0.859  answered f=1
+  ic-07   0.851  answered f=1
+  ic-08   0.881  answered f=1
+  ic-09   0.886  answered f=1
+  ic-10   0.798  answered f=1
+  ic-11   0.866  answered f=1
+  ic-12   0.864  answered f=1
+  oc-01   0.570  refused:model_declined
+  oc-02   0.736  refused:model_declined
+  oc-03   0.544  refused:model_declined
+  oc-04   0.692  refused:model_declined
+  oc-05   0.756  refused:model_declined
+  oc-06   0.727  refused:model_declined
+  oc-07   0.757  refused:model_declined
+  oc-08   0.704  refused:model_declined
+  am-01   0.594  answered f=1
+  am-02   0.699  refused:model_declined
+  am-03   0.654  refused:model_declined
+  am-04   0.620  answered f=1
+  am-05   0.644  answered f=0.75
+  ad-01   0.838  answered f=1
+  ad-02   0.834  answered f=1
+  ad-03   0.863  answered f=1
+
+  wrote /home/sethz/projects/glassbox/eval/fixtures/latest.json  (28/28 cases, sha a5f90d3)
+  neurons spent: 2530.8 of 10,000/day
+```
+
+</details>
+
+All judge failures resolved — **12/12 in-corpus at faithfulness 1.0, 8/8 out-of-corpus refused**. Setting the regression floors and running the gate:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+cat > eval/floors.json <<'EOF'
+{
+  "_comment": "Regr
+… [541 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+  glassbox evaluation — replayed from fixtures (sha a5f90d3), tau = 0.62
+
+  bucket                 n   refuse%  false-refuse%  faithful   hit@6    MRR
+  ─────────────────────────────────────────────────────────────────────────
+  in_corpus_factual    12        -          0.0%     1.000   1.000  0.861
+  out_of_corpus         8   100.0%             -         -       -      -
+  ambiguous             5        -             -     0.875       -      -
+  adversarial           3        -          0.0%     1.000   0.667  0.444
+
+  latency ms      p50     p95
+  ───────────────────────────
+  embed          309     497
+  retrieve        18      30
+  generate      1247    2355
+  judge         2497    6628
+  total         3390    6621
+
+  tau sweep      out-of-corpus refused    in-corpus wrongly refused
+  ──────────────────────────────────────────────────────────────────
+   0.45                 100.0%                      0.0%
+   0.50                 100.0%                      0.0%
+   0.55                 100.0%                      0.0%
+   0.60                 100.0%                      0.0%
+   0.65                 100.0%                      0.0%
+   0.70                 100.0%                      8.3%
+   0.75                 100.0%                      8.3%
+   0.80                 100.0%                     25.0%
+   0.85                 100.0%                     33.3%
+
+  best balanced tau: 0.45  (refuse 100.0%, false-refuse   0.0%)
+
+  28 cases · 2530.8 neurons at record time
+
+  regression floors
+  ─────────────────
+  ✓ out-of-corpus refusal rate ≥   1.000  (bound 1.000)
+  ✓ in-corpus false-refusal ≤      0.000  (bound 0.084)
+  ✓ in-corpus faithfulness ≥       1.000  (bound 0.900)
+  ✓ in-corpus retrieval hit@6 ≥    1.000  (bound 0.900)
+
+  all floors held.
+```
+
+</details>
+
+All floors hold. This produced a finding that **contradicts my own design**, so let me record it properly:
+
+```text
+⚙ Edit — /home/sethz/projects/glassbox/docs/DESIGN.md
+```
+
+<details><summary>result</summary>
+
+```text
+The file /home/sethz/projects/glassbox/docs/DESIGN.md has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+python3 - <<'PY'
+import io
+p=".github/workflows/ci.y
+… [1100 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+26:    name: verify
+36:      - name: Install
+39:      - name: Typecheck
+42:      - name: Unit tests
+47:      - name: Corpus integrity
+51:      - name: Evaluation replay (regression gate)
+57:      - name: Transcript credential scan
+63:      - name: Summary
+
+=== full local CI ===
+  typecheck ✓
+  tests ✓
+  corpus ✓
+  eval gate ✓
+  transcript ✓
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+python3 - <<'PY'
+import io
+p="README.md"; s=io.open(
+… [3256 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+README updated
+| out-of-corpus | 8 | **100.0%** | — | — | — | — |
+| ambiguous | 5 | — | — | 0.875 | — | — |
+| adversarial | 3 | — | 0.0% | 1.000 | 0.667 | 0.444 |
+
+Refusal rate alone is meaningless — an agent that refuses everything scores 100%. It is only
+informative next to the false-refusal rate it trades against.
+
+### The interesting result: similarity alone cannot do this
+
+There are two refusal gates — a similarity threshold, and a sentinel the model emits when the
+retrieved passages do not actually answer the question. Sweeping the threshold shows it
+contributes **nothing** to refusal quality:
+
+| τ | out-of-corpus refused | in-corpus wrongly refused |
+|---|---|---|
+| 0.45 – 0.65 | 100% | 0% |
+| 0.70 | 100% | 8.3% |
+| 0.85 | 100% | 33.3% |
+
+Because the score distributions **overlap**. The highest-scoring out-of-corpus question (0.757,
+*"what is Cloudflare's refund policy for enterprise contracts"*) outranks the lowest-scoring
+in-corpus one (0.683, *"what is an authorization code"*). No threshold separates them.
+
+At τ = 0.62, of eight out-of-corpus questions the similarity gate catches **two**; the sentinel
+gate catches **six**. A similarity-only design would have let six of eight through to
+generation and answered them.
+
+So the threshold is not a correctness control — it is a **cost** control. A similarity refusal
+costs 0.09 neurons and ~477 ms; a sentinel refusal costs a full generation, ~100 neurons and
+~4.5 s. τ is set as high as it can go without causing false refusals.
 ```
 
 </details>

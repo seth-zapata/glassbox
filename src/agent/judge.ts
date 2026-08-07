@@ -93,7 +93,7 @@ export async function judge(
         content: `PASSAGES:\n${passages}\n\nQUESTION: ${question}\n\nANSWER: ${answer}`,
       },
     ],
-    max_tokens: 600,
+    max_tokens: 1500,
   })) as JudgeResponse;
 
   const judgeMs = Date.now() - started;

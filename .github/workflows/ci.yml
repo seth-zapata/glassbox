@@ -48,6 +48,12 @@ jobs:
         # The corpus is committed, so its provenance is checkable without fetching anything.
         run: npm run corpus:check
 
+      - name: Evaluation replay (regression gate)
+        # Recomputes every metric from committed fixtures and asserts eval/floors.json.
+        # Zero neurons, zero credentials — which is what lets the real quality gate run on
+        # every PR including forks. The expensive half (eval:record) is human-triggered.
+        run: npm run eval:replay
+
       - name: Transcript credential scan
         # The private phrase list is gitignored and therefore absent here, so this runs the
         # credential patterns only. The script fails loudly if the config is missing without
