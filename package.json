@@ -11,11 +11,11 @@
     "whoami": "wrangler whoami",
     "transcript": "node --experimental-strip-types scripts/export-transcript.ts",
     "transcript:check": "node --experimental-strip-types scripts/check-transcript-leaks.ts",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "wrangler types >/dev/null && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json",
     "transcript:check:ci": "node --experimental-strip-types scripts/check-transcript-leaks.ts --credentials-only"
   },
-  "author": "",
-  "license": "ISC",
+  "author": "Seth Zapata",
+  "license": "MIT",
   "devDependencies": {
     "@types/node": "^26.2.0",
     "typescript": "^7.0.2",
