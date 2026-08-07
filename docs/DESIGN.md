@@ -639,26 +639,58 @@ Set up **before** any application code, deliberately. If the repo were initializ
 skeleton existed, the history would open with one large unexplained commit — the exact shape
 that reads as unreviewed bulk generation.
 
-**Repo:** `seth-zapata/glassbox` — **private during the build, public at submission.** Full
-history is preserved when it flips, so nothing is lost by waiting, and it leaves room to correct
-an accidental credential commit before the content is permanently public and indexed.
+**Repo:** `seth-zapata/glassbox`, **public since 2026-08-07.**
+
+The original plan was private-during-build, public-at-submission, on the theory that privacy
+bought room to correct a mistake before it was permanently indexed. That was wrong on the
+merits, for two reasons:
+
+1. **Rulesets require Pro or a public repo** (verified: `POST /rulesets` returns 403 while
+   private). Protection arriving only after the code is written protects nothing.
+2. **Secret scanning with push protection is free on public repos** and needs paid Advanced
+   Security on private ones. Staying private wasn't buying safety — it was forfeiting the one
+   control that *mechanically blocks* a credential from being pushed, in exchange for manual
+   vigilance.
+
+Both are enabled now, and a probe push to `main` is rejected with `GH013`, citing the missing
+pull request and the missing `verify` check.
+
+| Control | State |
+|---|---|
+| `pull_request` (0 approvals — solo) | active |
+| `required_status_checks: verify`, strict | active |
+| `deletion`, `non_fast_forward` | active |
+| Secret scanning + push protection | enabled |
 
 **Commit identity:** the account's GitHub `users.noreply` address. Attributes to the GitHub
 account and counts toward the contribution graph without putting a personal address in a public
 repository's permanent history. Set repo-locally, not globally — the machine's global git
 identity is a separate decision.
 
-**Branch protection is not yet enforced.** GitHub rulesets require Pro or a public repository
-(verified: `POST /repos/.../rulesets` returns 403 while private). Until the flip, PR-only is a
-convention. Run this at the moment the repo goes public, so the CI gate is actually binding:
+### Publishing required rebuilding the repository
 
-```sh
-gh repo edit seth-zapata/glassbox --visibility public --accept-visibility-change-consequences
-gh api -X POST repos/seth-zapata/glassbox/rulesets \
-  -f name='require-pr-to-main' -f target='branch' -f enforcement='active' \
-  -F 'conditions[ref_name][include][]=~DEFAULT_BRANCH' \
-  -F 'rules[][type]=pull_request'
-```
+The pre-publication audit found one sentence in `docs/DESIGN.md` that belonged to the private
+planning document. Scrubbing it locally was easy — `filter-branch`, drop `refs/original/`,
+`reflog expire`, `gc --prune=now`, verified by scanning every blob in the object store.
+
+That was not sufficient. **GitHub retains pull-request refs permanently**, and
+`refs/pull/1/head` still pointed at the pre-scrub tree. Force-pushing `main` does not touch it,
+and PR refs cannot be deleted. A fetch of `refs/pull/1/head` confirmed the old content was still
+served. On a public repo, anyone could do that fetch.
+
+The account's token lacked `delete_repo`, so the fix avoided deletion entirely: rename the
+contaminated repository aside (it stays private), create a fresh one, and push the scrubbed
+history into a repo that has never had a pull request. Verified against a `--mirror` clone of
+the *remote* rather than local state: one ref, 13 blobs, clean.
+
+**The generalisable lesson:** rewriting git history does not unpublish anything GitHub has
+already indexed under a PR ref. Audit before the first pull request, not before publication.
+
+Two of the three original audit hits were **false positives from the audit itself** — a
+credential pattern written as `[0-9a-f]{32}` without word boundaries, which matches any 32-char
+window of git's own 40-character blob SHAs. The committed checker uses `\b…\b` and did not have
+this bug; the throwaway script did. Worth remembering that an audit tool needs the same scrutiny
+as the thing it audits.
 
 ### Prompt-history pipeline
 
