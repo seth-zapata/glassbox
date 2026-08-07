@@ -62,4 +62,11 @@ export interface StoredMessage {
   role: "user" | "assistant";
   content: string;
   createdAt: number;
+  /**
+   * Set on assistant turns that refused. Refusals are persisted so the conversation reads
+   * correctly on reload, but are excluded from the context replayed to the model — a
+   * similarity-gated refusal never reached the model, so feeding it back as prior assistant
+   * output would be inventing history it never produced.
+   */
+  refusalReason: RefusalReason | null;
 }

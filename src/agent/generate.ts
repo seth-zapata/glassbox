@@ -7,7 +7,7 @@
  * emit a sentinel instead of answering, and the sentinel is treated as a refusal.
  */
 
-import type { RetrievedChunk } from "../shared/types.ts";
+import type { RetrievedChunk, StoredMessage } from "../shared/types.ts";
 
 export const GENERATOR = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 
@@ -49,6 +49,28 @@ export function buildMessages(
     ...history.slice(-4),
     { role: "user", content: `Passages:\n\n${passages}\n\nQuestion: ${question}` },
   ];
+}
+
+/**
+ * Select the stored turns that may be replayed to the model.
+ *
+ * Refusals are persisted so the conversation reads correctly on reload, but they are not model
+ * output: a similarity-gated refusal never reached the model at all, and a sentinel refusal was
+ * a token, not prose. Replaying either as prior assistant text would invent history the model
+ * never produced — and would bias it toward refusing again.
+ */
+export function replayableContext(history: StoredMessage[]): ChatMessage[] {
+  const out: ChatMessage[] = [];
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    if (!m) continue;
+    if (m.role === "assistant" && m.refusalReason !== null) continue;
+    // Drop the question that produced a refusal too — a user turn with no answer after it
+    // reads to the model as an unanswered request and invites it to answer belatedly.
+    if (m.role === "user" && history[i + 1]?.refusalReason != null) continue;
+    out.push({ role: m.role, content: m.content });
+  }
+  return out;
 }
 
 /** A model that emitted the sentinel declined to answer; anything else is an answer. */
