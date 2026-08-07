@@ -8,13 +8,11 @@
 
 import { ingest } from "./agent/ingest.ts";
 import type { CorpusDoc } from "./agent/chunk.ts";
+import { sessionIdFrom } from "./shared/session.ts";
 import { writeRun, listRuns, type EvalRunSummary, type EvalCaseRow } from "./agent/evalStore.ts";
 
 export { ChatAgent } from "./agent/ChatAgent.ts";
 
-function sessionIdFrom(url: URL): string {
-  return url.searchParams.get("session")?.trim().slice(0, 64) || "default";
-}
 
 /**
  * Ingest is guarded by a shared secret, not because the corpus is sensitive, but because it
@@ -83,7 +81,18 @@ export default {
       return Response.json({ runs: await listRuns(env.DB) });
     }
 
-    const id = env.CHAT_AGENT.idFromName(sessionIdFrom(url));
+    const session = sessionIdFrom(url);
+    if (session === null) {
+      return Response.json(
+        {
+          error:
+            "a session id of 24-64 characters ([A-Za-z0-9_-]) is required; conversations are isolated per id and there is no shared default",
+        },
+        { status: 400 },
+      );
+    }
+
+    const id = env.CHAT_AGENT.idFromName(session);
     return env.CHAT_AGENT.get(id).fetch(request);
   },
 } satisfies ExportedHandler<Env>;

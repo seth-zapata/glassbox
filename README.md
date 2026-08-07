@@ -192,6 +192,11 @@ Stated plainly, because a project about honest measurement should be honest abou
 - **Ambiguous questions have no automated grade.** Whether a clarifying question is *good* is a
   judgement the harness does not make; those five cases are reported, not scored.
 - **One region, one language, no load testing.** Latency figures are single-client from one place.
+- **There is no authentication, and the session id is a bearer capability.** Conversations are
+  isolated per session — a random id is minted in `localStorage` on first visit, so opening the
+  public URL never shows anyone else's history — but whoever holds an id can read that
+  conversation. Ids must be 24–64 unguessable characters and there is no shared default, so a
+  missing id is rejected rather than pooled. Don't put anything sensitive in it.
 
 ## Deliberately not built
 

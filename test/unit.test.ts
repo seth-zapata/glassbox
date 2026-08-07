@@ -16,6 +16,7 @@ import { parseVerdict, extractText, JUDGE } from "../src/agent/judge.ts";
 import { declined, neuronsFor, replayableContext, INSUFFICIENT } from "../src/agent/generate.ts";
 import { belowThreshold, DEFAULT_TAU } from "../src/agent/retrieve.ts";
 import { refusalMessage, CORPUS_SCOPE } from "../src/shared/scope.ts";
+import { sessionIdFrom } from "../src/shared/session.ts";
 
 const doc = (body: string): CorpusDoc => ({
   id: "d",
@@ -269,5 +270,32 @@ describe("refusalMessage", () => {
     for (const r of ["low_similarity", "model_declined"] as const) {
       assert.match(refusalMessage(r, 0.5, 0.62), /^Refused/);
     }
+  });
+});
+
+describe("sessionIdFrom", () => {
+  const at = (qs: string) => sessionIdFrom(new URL(`https://x.test/api/chat${qs}`));
+  const uuid = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+  test("accepts a UUID", () => {
+    assert.equal(at(`?session=${uuid}`), uuid);
+  });
+
+  test("rejects a missing session rather than sharing a default object", () => {
+    // The previous fallback pooled every session-less caller into one world-readable object.
+    assert.equal(at(""), null);
+    assert.equal(at("?session="), null);
+    assert.equal(at("?session=%20%20"), null);
+  });
+
+  test("rejects guessable ids", () => {
+    for (const s of ["default", "test", "admin", "1", "abc"]) {
+      assert.equal(at(`?session=${s}`), null, `"${s}" must be rejected`);
+    }
+  });
+
+  test("rejects ids that are too long or contain separators", () => {
+    assert.equal(at(`?session=${"a".repeat(65)}`), null);
+    assert.equal(at("?session=../../etc/passwd-aaaaaaaaaaaaaa"), null);
   });
 });
