@@ -649,14 +649,30 @@
             if (m.role === "user") {
               questionCard(m.content);
             } else {
+              const refused = m.refusalReason !== null && m.refusalReason !== undefined;
               const c = card("glassbox");
               const body = el("div", "card-body");
-              body.append(el("div", "answer", m.content));
+              const ans = el("div", `answer${refused ? " refused" : ""}`, m.content);
+              body.append(ans);
               c.append(body);
+
+              const panel = el("div", "panel");
+              const strip = el("div", "strip");
+              strip.append(el("span", "strip-label", "evaluation"));
+              // A restored turn shows the outcome it recorded, and says plainly that the
+              // measurements behind it are not being replayed — the panel must never imply it
+              // measured something it did not.
+              strip.append(
+                refused
+                  ? badge("warning", "⊘", `refused · ${m.refusalReason.replace(/_/g, " ")}`)
+                  : badge("muted", "·", "restored"),
+              );
+              panel.append(strip);
               const note = el("div", "section");
               note.append(el("div", "scale-note",
-                "Restored from Durable Object storage — the evaluation trace is not replayed for past turns."));
-              c.append(note);
+                "Restored from Durable Object storage. Evidence, verdict and timings are recorded per turn but are not replayed here."));
+              panel.append(note);
+              c.append(panel);
             }
           }
         } catch {

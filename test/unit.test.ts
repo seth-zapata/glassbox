@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 
 import { chunkDocument, parseCorpusFile, type CorpusDoc } from "../src/agent/chunk.ts";
 import { parseVerdict, extractText, JUDGE } from "../src/agent/judge.ts";
-import { declined, neuronsFor, INSUFFICIENT } from "../src/agent/generate.ts";
+import { declined, neuronsFor, replayableContext, INSUFFICIENT } from "../src/agent/generate.ts";
 import { belowThreshold, DEFAULT_TAU } from "../src/agent/retrieve.ts";
 
 const doc = (body: string): CorpusDoc => ({
@@ -198,5 +198,52 @@ describe("neuron accounting", () => {
 
   test("is zero for an empty turn", () => {
     assert.equal(neuronsFor(0, 0), 0);
+  });
+});
+
+describe("replayableContext", () => {
+  const msg = (
+    role: "user" | "assistant",
+    content: string,
+    refusalReason: "low_similarity" | "model_declined" | null = null,
+  ) => ({ id: content, role, content, createdAt: 0, refusalReason });
+
+  test("keeps ordinary question/answer pairs", () => {
+    const ctx = replayableContext([msg("user", "q1"), msg("assistant", "a1")]);
+    assert.deepEqual(ctx, [
+      { role: "user", content: "q1" },
+      { role: "assistant", content: "a1" },
+    ]);
+  });
+
+  test("drops a refusal and the question that produced it", () => {
+    // A gated refusal never reached the model; replaying it would invent model output.
+    const ctx = replayableContext([
+      msg("user", "out of corpus"),
+      msg("assistant", "Refused.", "low_similarity"),
+      msg("user", "q2"),
+      msg("assistant", "a2"),
+    ]);
+    assert.deepEqual(ctx, [
+      { role: "user", content: "q2" },
+      { role: "assistant", content: "a2" },
+    ]);
+  });
+
+  test("drops sentinel refusals too", () => {
+    const ctx = replayableContext([
+      msg("user", "unanswerable"),
+      msg("assistant", "Refused.", "model_declined"),
+    ]);
+    assert.deepEqual(ctx, []);
+  });
+
+  test("never leaves a user turn with no answer after it", () => {
+    // An orphan question reads as an unanswered request and invites a belated answer.
+    const ctx = replayableContext([
+      msg("user", "q1"),
+      msg("assistant", "Refused.", "low_similarity"),
+    ]);
+    assert.equal(ctx.filter((m) => m.role === "user").length, 0);
   });
 });

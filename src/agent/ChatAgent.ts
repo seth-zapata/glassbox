@@ -7,6 +7,7 @@ import {
   buildMessages,
   declined,
   neuronsFor,
+  replayableContext,
   type ChatMessage,
 } from "./generate.ts";
 import { judge, JUDGE } from "./judge.ts";
@@ -32,6 +33,13 @@ export class ChatAgent extends DurableObject<Env> {
         created_at INTEGER NOT NULL
       )
     `);
+    // Durable Objects created before refusals were persisted still exist; ALTER is the
+    // migration. It throws once the column is present, which is the expected steady state.
+    try {
+      this.ctx.storage.sql.exec("ALTER TABLE messages ADD COLUMN refusal_reason TEXT");
+    } catch {
+      // Column already present.
+    }
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS turn_traces (
         id            TEXT PRIMARY KEY,
@@ -68,8 +76,14 @@ export class ChatAgent extends DurableObject<Env> {
 
   private history(): StoredMessage[] {
     return this.ctx.storage.sql
-      .exec<{ id: string; role: string; content: string; created_at: number }>(
-        "SELECT id, role, content, created_at FROM messages ORDER BY created_at ASC",
+      .exec<{
+        id: string;
+        role: string;
+        content: string;
+        created_at: number;
+        refusal_reason: string | null;
+      }>(
+        "SELECT id, role, content, created_at, refusal_reason FROM messages ORDER BY created_at ASC",
       )
       .toArray()
       .map((r) => ({
@@ -77,6 +91,7 @@ export class ChatAgent extends DurableObject<Env> {
         role: r.role as StoredMessage["role"],
         content: r.content,
         createdAt: r.created_at,
+        refusalReason: (r.refusal_reason as RefusalReason | null) ?? null,
       }));
   }
 
@@ -89,13 +104,18 @@ export class ChatAgent extends DurableObject<Env> {
       .map((r) => JSON.parse(r.result_json) as unknown);
   }
 
-  private save(role: StoredMessage["role"], content: string): void {
+  private save(
+    role: StoredMessage["role"],
+    content: string,
+    refusalReason: RefusalReason | null = null,
+  ): void {
     this.ctx.storage.sql.exec(
-      "INSERT INTO messages (id, role, content, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO messages (id, role, content, created_at, refusal_reason) VALUES (?, ?, ?, ?, ?)",
       crypto.randomUUID(),
       role,
       content,
       Date.now(),
+      refusalReason,
     );
   }
 
@@ -113,10 +133,7 @@ export class ChatAgent extends DurableObject<Env> {
 
   private streamTurn(question: string, tau: number): Response {
     const started = Date.now();
-    const priorTurns: ChatMessage[] = this.history().map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+    const priorTurns: ChatMessage[] = replayableContext(this.history());
 
     const encoder = new TextEncoder();
     const self = this;
@@ -127,12 +144,11 @@ export class ChatAgent extends DurableObject<Env> {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         };
 
-        const finish = (
-          result: TurnResult,
-          persist: { user: boolean; assistant: string | null },
-        ): void => {
-          if (persist.user) self.save("user", question);
-          if (persist.assistant !== null) self.save("assistant", persist.assistant);
+        const finish = (result: TurnResult, assistantText: string | null): void => {
+          self.save("user", question);
+          if (assistantText !== null) {
+            self.save("assistant", assistantText, result.refusalReason);
+          }
           self.saveTrace(question, result);
           send({ type: "done", result });
         };
@@ -165,7 +181,7 @@ export class ChatAgent extends DurableObject<Env> {
                 models,
                 neurons: Math.round(r.neurons * 100) / 100,
               },
-              { user: true, assistant: null },
+              `Refused. Nothing in the corpus scored above the similarity gate — best match ${r.maxScore.toFixed(3)}, gate ${tau}.`,
             );
             return;
           }
@@ -252,7 +268,7 @@ export class ChatAgent extends DurableObject<Env> {
                 models,
                 neurons: Math.round((r.neurons + genNeurons) * 100) / 100,
               },
-              { user: true, assistant: null },
+              "Refused. The retrieved passages do not answer this question.",
             );
             return;
           }
@@ -278,7 +294,7 @@ export class ChatAgent extends DurableObject<Env> {
               models,
               neurons: Math.round((r.neurons + genNeurons + j.neurons) * 100) / 100,
             },
-            { user: true, assistant: answer },
+            answer,
           );
         } catch (error) {
           send({
