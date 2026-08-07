@@ -11,6 +11,7 @@ import {
   type ChatMessage,
 } from "./generate.ts";
 import { judge, JUDGE } from "./judge.ts";
+import { refusalMessage } from "../shared/scope.ts";
 
 /**
  * One Durable Object per chat session: conversation state plus the turn pipeline.
@@ -163,7 +164,8 @@ export class ChatAgent extends DurableObject<Env> {
           // ── gate one: nothing similar enough, refuse before spending a token ────────────
           if (belowThreshold(r.maxScore, tau)) {
             const reason: RefusalReason = "low_similarity";
-            send({ type: "refusal", reason, maxScore: r.maxScore, tau });
+            const message = refusalMessage(reason, r.maxScore, tau);
+            send({ type: "refusal", reason, maxScore: r.maxScore, tau, message });
             finish(
               {
                 answer: null,
@@ -181,7 +183,7 @@ export class ChatAgent extends DurableObject<Env> {
                 models,
                 neurons: Math.round(r.neurons * 100) / 100,
               },
-              `Refused. Nothing in the corpus scored above the similarity gate — best match ${r.maxScore.toFixed(3)}, gate ${tau}.`,
+              message,
             );
             return;
           }
@@ -250,7 +252,8 @@ export class ChatAgent extends DurableObject<Env> {
           // ── gate two: retrieval scored fine but the passages do not answer it ───────────
           if (declined(answer)) {
             const reason: RefusalReason = "model_declined";
-            send({ type: "refusal", reason, maxScore: r.maxScore, tau });
+            const message = refusalMessage(reason, r.maxScore, tau);
+            send({ type: "refusal", reason, maxScore: r.maxScore, tau, message });
             finish(
               {
                 answer: null,
@@ -268,7 +271,7 @@ export class ChatAgent extends DurableObject<Env> {
                 models,
                 neurons: Math.round((r.neurons + genNeurons) * 100) / 100,
               },
-              "Refused. The retrieved passages do not answer this question.",
+              message,
             );
             return;
           }

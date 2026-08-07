@@ -52,7 +52,7 @@ export interface TurnResult {
 export type TurnEvent =
   | { type: "retrieval"; chunks: RetrievedChunk[]; retrieveMs: number }
   | { type: "token"; delta: string }
-  | { type: "refusal"; reason: RefusalReason; maxScore: number; tau: number }
+  | { type: "refusal"; reason: RefusalReason; maxScore: number; tau: number; message: string }
   | { type: "judge"; verdict: JudgeVerdict }
   | { type: "done"; result: TurnResult }
   | { type: "error"; message: string };
