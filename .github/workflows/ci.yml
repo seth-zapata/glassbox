@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A second run of the same ref is always more current than the one in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Tier 1 — runs on every pull request, including from forks.
+  #
+  # Costs nothing and needs no credentials, which is the point: the evaluation suite calls
+  # Workers AI, and the free-plan allocation is 10,000 neurons/day against roughly 3,700 for a
+  # full run. Wiring that into every push would drain the daily budget and take the deployed
+  # demo down with it — a gate that can break the service it guards is not a gate. The live
+  # evaluation therefore runs on demand (Tier 2, added with the eval suite), while everything
+  # deterministic is verified here and blocks the merge.
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Transcript credential scan
+        # The private phrase list is gitignored and therefore absent here, so this runs the
+        # credential patterns only. The script fails loudly if the config is missing without
+        # this flag, rather than loading zero phrases and reporting a pass.
+        run: npm run transcript:check:ci
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### Tier 1 — deterministic checks"
+            echo ""
+            echo "| Check | Status |"
+            echo "|---|---|"
+            echo "| Typecheck | ${{ job.status }} |"
+            echo "| Transcript credential scan | ${{ job.status }} |"
+            echo ""
+            echo "_Coverage grows as the code lands: unit tests and eval-set schema validation"
+            echo "with \`src/\`, then the evaluation replay gate with committed metric floors._"
+          } >> "$GITHUB_STEP_SUMMARY"
