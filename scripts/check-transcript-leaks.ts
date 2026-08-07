@@ -23,6 +23,22 @@ if (!existsSync(transcriptPath)) {
 
 const transcript = readFileSync(transcriptPath, "utf8").toLowerCase();
 
+// The phrase list is gitignored, so it does not exist in CI. Without this guard the check would
+// load zero phrases, find zero matches, and report success — passing by having nothing to check,
+// which is the same failure mode as a checker that silently produces no output. CI must opt in
+// to the reduced check explicitly, and the reduced scope is printed in the result.
+const credentialsOnly = process.argv.includes("--credentials-only");
+
+if (!existsSync(configPath) && !credentialsOnly) {
+  console.error(
+    `Missing ${configPath}.\n` +
+      `Private-phrase verification cannot run without it, and passing without checking would be\n` +
+      `worse than failing. Copy scripts/redactions.example.json, or pass --credentials-only to\n` +
+      `run just the credential patterns (which need no configuration).`,
+  );
+  process.exit(1);
+}
+
 const config = existsSync(configPath)
   ? (JSON.parse(readFileSync(configPath, "utf8")) as { phrases?: string[]; filePaths?: string[] })
   : { phrases: [], filePaths: [] };
@@ -39,7 +55,7 @@ const CREDENTIAL_CHECKS: Array<{ name: string; pattern: RegExp }> = [
 
 let failures = 0;
 
-const phrases = config.phrases ?? [];
+const phrases = credentialsOnly ? [] : (config.phrases ?? []);
 phrases.forEach((phrase, i) => {
   if (transcript.includes(phrase.toLowerCase())) {
     console.error(`  ✗ private phrase #${i} still present`);
@@ -66,6 +82,12 @@ console.log(
   `Checked ${phrases.length} private phrase(s) and ${CREDENTIAL_CHECKS.length} credential pattern(s) ` +
     `against ${transcript.length.toLocaleString()} characters.`,
 );
+if (credentialsOnly) {
+  console.log(
+    "Mode: credentials-only — private-phrase verification was SKIPPED (no config available).\n" +
+      "The full check runs locally before the transcript is committed.",
+  );
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) FAILED — do not commit this transcript.`);
