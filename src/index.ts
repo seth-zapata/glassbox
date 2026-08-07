@@ -8,6 +8,7 @@
 
 import { ingest } from "./agent/ingest.ts";
 import type { CorpusDoc } from "./agent/chunk.ts";
+import { writeRun, listRuns, type EvalRunSummary, type EvalCaseRow } from "./agent/evalStore.ts";
 
 export { ChatAgent } from "./agent/ChatAgent.ts";
 
@@ -57,6 +58,29 @@ export default {
       }
       const report = await ingest(env.AI, env.VECTORIZE, docs);
       return Response.json(report);
+    }
+
+    if (url.pathname === "/api/admin/eval-run" && request.method === "POST") {
+      if (!ingestAuthorized(request, env)) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const body = (await request.json()) as {
+        summary?: EvalRunSummary;
+        cases?: EvalCaseRow[];
+        recordedAt?: number;
+      };
+      if (!body.summary || !Array.isArray(body.cases)) {
+        return Response.json({ error: "summary and cases[] are required" }, { status: 400 });
+      }
+      // recordedAt comes from the client: Workers have no wall clock outside a request, and the
+      // recording ran on the client's clock anyway.
+      const written = await writeRun(env.DB, body.summary, body.cases, body.recordedAt ?? Date.now());
+      return Response.json(written);
+    }
+
+    // Public read — the evaluation history is the point of publishing this at all.
+    if (url.pathname === "/api/eval/history") {
+      return Response.json({ runs: await listRuns(env.DB) });
     }
 
     const id = env.CHAT_AGENT.idFromName(sessionIdFrom(url));

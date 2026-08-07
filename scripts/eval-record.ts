@@ -16,9 +16,21 @@ import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import type { TurnResult } from "../src/shared/types.ts";
 import type { EvalCase, RecordedCase } from "../src/shared/metrics.ts";
-import { totalNeurons } from "../src/shared/metrics.ts";
+import { totalNeurons, bucketMetrics, latencies, rankOfExpectedDoc } from "../src/shared/metrics.ts";
+import { DEFAULT_TAU } from "../src/agent/retrieve.ts";
 
 const WORKER = process.env.WORKER_URL ?? "https://glassbox.glassbox.workers.dev";
+
+/** .dev.vars is gitignored; reading it here keeps the secret off the command line. */
+function tokenFromDevVars(): string | undefined {
+  const path = join(process.cwd(), ".dev.vars");
+  if (!existsSync(path)) return undefined;
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    const m = line.match(/^\s*INGEST_TOKEN\s*=\s*(.+)\s*$/);
+    if (m?.[1]) return m[1].replace(/^["']|["']$/g, "").trim();
+  }
+  return undefined;
+}
 
 function loadCases(): EvalCase[] {
   const path = join(process.cwd(), "eval", "eval-set.jsonl");
@@ -107,6 +119,7 @@ async function main(): Promise<void> {
 
   console.log(`\n  wrote ${path}  (${records.length}/${cases.length} cases, sha ${sha})`);
   console.log(`  neurons spent: ${totalNeurons(records)} of 10,000/day`);
+  console.log("  next: npm run eval:publish  (writes this run to D1 — costs nothing)");
   if (records.length < cases.length) {
     console.error(`\n  ${cases.length - records.length} case(s) failed — fixture is incomplete.`);
     process.exit(1);

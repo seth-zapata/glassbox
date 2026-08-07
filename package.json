@@ -20,7 +20,8 @@
     "corpus:check": "node --experimental-strip-types scripts/check-corpus.ts",
     "eval:record": "node --experimental-strip-types scripts/eval-record.ts",
     "eval:replay": "node --experimental-strip-types scripts/eval-replay.ts",
-    "eval": "npm run eval:replay"
+    "eval": "npm run eval:replay",
+    "eval:publish": "node --experimental-strip-types scripts/eval-publish.ts"
   },
   "author": "Seth Zapata",
   "license": "MIT",

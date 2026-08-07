@@ -3,9 +3,10 @@
 **A glass-box RAG agent on Cloudflare Workers — it refuses to guess, and shows you the evidence
 and the numbers either way.**
 
-> 🚧 **Status: in development.** Grounding, refusal, and the evaluation harness are working and
-> measured; the evaluation panel in the UI is still to come. Every number below is reproducible
-> with `npm run eval:replay` against committed fixtures.
+**Live:** https://glassbox.glassbox.workers.dev
+
+Every number below is reproducible with `npm run eval:replay` against committed fixtures — no
+credentials and no model calls required.
 
 ---
 
@@ -73,11 +74,11 @@ The judge dominates. It runs after the answer has fully streamed, so it never de
 
 | Required | Implementation | Where |
 |---|---|---|
-| **LLM** | Workers AI — Llama 3.3 70B (generation), BGE base (embeddings), GPT-OSS 20B (judge) | `src/agent/generate.ts`, `src/agent/judge.ts` |
-| **Workflow / coordination** | **Durable Objects** — one agent instance per session, orchestrating retrieve → gate → generate → judge | `src/agent/ChatAgent.ts` |
-| **User input** | Text chat UI over Workers static assets | `src/ui/` |
-| **Memory / state** | **DO SQLite** for conversation history and per-turn traces; **D1** for evaluation-run history | `src/agent/ChatAgent.ts`, `migrations/` |
-| *Optional* | **Vectorize** over the committed corpus | `src/agent/retrieve.ts`, `scripts/ingest.ts` |
+| **LLM** | Workers AI — `llama-3.3-70b-instruct-fp8-fast` (generation), `bge-base-en-v1.5` (embeddings), `gpt-oss-20b` (judge, deliberately a different family) | [`generate.ts`](src/agent/generate.ts), [`judge.ts`](src/agent/judge.ts) |
+| **Workflow / coordination** | **Durable Objects** — one instance per session, orchestrating retrieve → gate → generate → gate → judge | [`ChatAgent.ts`](src/agent/ChatAgent.ts) |
+| **User input** | Text chat with a live evaluation panel, served from Workers static assets | [`public/index.html`](public/index.html) |
+| **Memory / state** | **DO SQLite** for conversation history and per-turn traces; **D1** for evaluation history across deploys — see [`/api/eval/history`](https://glassbox.glassbox.workers.dev/api/eval/history) | [`ChatAgent.ts`](src/agent/ChatAgent.ts), [`evalStore.ts`](src/agent/evalStore.ts), [`migrations/`](migrations/) |
+| *Optional* | **Vectorize** — 70 chunks over 18 committed documents | [`retrieve.ts`](src/agent/retrieve.ts), [`ingest.ts`](src/agent/ingest.ts) |
 
 Full rationale, rejected alternatives, and the platform research behind each choice are in
 [`docs/DESIGN.md`](docs/DESIGN.md).
@@ -152,11 +153,34 @@ transcript, and `npm run transcript:check` fails the build if anything slips thr
 
 ---
 
+## Known limitations
+
+Stated plainly, because a project about honest measurement should be honest about itself.
+
+- **Neuron cost is estimated, not billed.** It is computed from the token counts Workers AI
+  returns times published per-model rates, not read back from Cloudflare's billing.
+- **The eval set is 28 cases, written by the same person who built the system.** That is enough
+  to catch regressions and to expose the score-overlap result; it is not a benchmark, and it
+  shares an author's blind spots with the thing it measures.
+- **The judge is a single model with no human-labelled ground truth.** Faithfulness of 1.000 means
+  one model found every claim supported. It failed three separate times during development —
+  each time visibly, because the parse fallback never reports "supported" — but a judge that
+  agrees with the generator for the wrong reason would not show up here.
+- **`gpt-oss-20b` is a reasoning model and a poor fit for a structured-output judge.** It returns
+  an undocumented response shape and silently emits nothing when its token budget is short. It
+  works now; a non-reasoning judge would be a better choice.
+- **Adversarial retrieval is the weakest measured path** — hit@6 0.667 against 1.000 for plain
+  in-corpus questions. False premises pull the query embedding away from the passage that refutes
+  them. Generation compensated in all three cases; a larger corpus would likely expose this.
+- **Ambiguous questions have no automated grade.** Whether a clarifying question is *good* is a
+  judgement the harness does not make; those five cases are reported, not scored.
+- **One region, one language, no load testing.** Latency figures are single-client from one place.
+
 ## Deliberately not built
 
-Called out as choices rather than gaps: authentication, user accounts, multi-tenancy, voice
-input, fine-tuning, a large or dynamic corpus, mobile/responsive layout, and UI polish beyond
-legible and functional. The time went into measurement instead.
+Choices rather than gaps: authentication, user accounts, multi-tenancy, voice input, fine-tuning,
+a large or dynamic corpus, mobile/responsive layout, and UI polish beyond legible and functional.
+The time went into measurement instead.
 
 ---
 

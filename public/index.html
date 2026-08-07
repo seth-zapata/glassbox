@@ -3,33 +3,200 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>glassbox</title>
+    <title>glassbox — a RAG agent that shows its work</title>
     <style>
-      :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 15%, transparent); }
-      body {
-        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
-        max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 6rem;
+      /* Palette roles. Dark values are declared under both the OS media query and the
+         data-theme scope so a viewer's toggle wins in either direction. */
+      :root {
+        color-scheme: light;
+        --surface-1: #fcfcfb;
+        --plane: #f9f9f7;
+        --ink-1: #0b0b0b;
+        --ink-2: #52514e;
+        --ink-muted: #898781;
+        --grid: #e1e0d9;
+        --baseline: #c3c2b7;
+        --hairline: rgba(11, 11, 11, 0.1);
+        /* categorical slots 1–4: embed, retrieve, generate, judge */
+        --s1: #2a78d6;
+        --s2: #eb6834;
+        --s3: #1baf7a;
+        --s4: #eda100;
+        /* sequential hue for similarity magnitude */
+        --seq: #2a78d6;
+        --seq-track: #cde2fb;
+        --good: #0ca30c;
+        --warning: #fab219;
+        --critical: #d03b3b;
       }
-      h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
-      .sub { opacity: .65; font-size: .85rem; margin: 0 0 1.5rem; }
-      #log > div { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: .5rem; margin-bottom: .6rem; }
-      .role { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .55; margin-bottom: .3rem; }
-      .meta { font-size: .78rem; opacity: .7; font-family: ui-monospace, monospace; white-space: pre-wrap; }
-      form { display: flex; gap: .5rem; margin-top: 1rem; }
-      input { flex: 1; padding: .6rem .7rem; font: inherit; border: 1px solid var(--line); border-radius: .5rem; background: transparent; color: inherit; }
-      button { padding: .6rem 1rem; font: inherit; border-radius: .5rem; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
-      button:disabled { opacity: .5; cursor: default; }
+      @media (prefers-color-scheme: dark) {
+        :root:where(:not([data-theme="light"])) {
+          color-scheme: dark;
+          --surface-1: #1a1a19;
+          --plane: #0d0d0d;
+          --ink-1: #ffffff;
+          --ink-2: #c3c2b7;
+          --ink-muted: #898781;
+          --grid: #2c2c2a;
+          --baseline: #383835;
+          --hairline: rgba(255, 255, 255, 0.1);
+          --s1: #3987e5;
+          --s2: #d95926;
+          --s3: #199e70;
+          --s4: #c98500;
+          --seq: #3987e5;
+          --seq-track: #184f95;
+        }
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --surface-1: #1a1a19;
+        --plane: #0d0d0d;
+        --ink-1: #ffffff;
+        --ink-2: #c3c2b7;
+        --ink-muted: #898781;
+        --grid: #2c2c2a;
+        --baseline: #383835;
+        --hairline: rgba(255, 255, 255, 0.1);
+        --s1: #3987e5;
+        --s2: #d95926;
+        --s3: #199e70;
+        --s4: #c98500;
+        --seq: #3987e5;
+        --seq-track: #184f95;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2.5rem 1rem 8rem;
+        background: var(--plane);
+        color: var(--ink-1);
+        font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .wrap { max-width: 52rem; margin: 0 auto; }
+      header { margin-bottom: 2rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 0.3rem; letter-spacing: -0.01em; }
+      .tagline { color: var(--ink-2); margin: 0; font-size: 0.92rem; }
+      .tagline code { font-size: 0.85em; color: var(--ink-muted); }
+
+      .turn { margin-bottom: 1.6rem; }
+      .who {
+        font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em;
+        color: var(--ink-muted); margin-bottom: 0.35rem;
+      }
+      .bubble {
+        background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 0.6rem; padding: 0.85rem 1rem;
+      }
+      .answer { white-space: pre-wrap; }
+
+      /* ── evaluation panel ─────────────────────────────────────────────── */
+      .panel { margin-top: 0.6rem; border: 1px solid var(--hairline); border-radius: 0.6rem; background: var(--surface-1); overflow: hidden; }
+      .panel-head {
+        display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+        padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--grid);
+      }
+      .panel-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-muted); }
+      .section { padding: 0.8rem 0.9rem; }
+      .section + .section { border-top: 1px solid var(--grid); }
+      .section h3 {
+        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--ink-muted); margin: 0 0 0.55rem; font-weight: 600;
+      }
+
+      /* status badges — icon + label, never colour alone */
+      .badge {
+        display: inline-flex; align-items: center; gap: 0.35rem;
+        font-size: 0.78rem; font-weight: 600; padding: 0.15rem 0.5rem;
+        border-radius: 0.35rem; border: 1px solid currentColor;
+      }
+      .badge .glyph { font-size: 0.9em; }
+      .badge.good { color: var(--good); }
+      .badge.critical { color: var(--critical); }
+      .badge.warning { color: var(--warning); }
+      .badge.muted { color: var(--ink-muted); }
+
+      /* retrieval meters — one measure, one hue, ranked */
+      .chunk { display: grid; grid-template-columns: 1fr auto; gap: 0.15rem 0.7rem; margin-bottom: 0.5rem; }
+      .chunk-label { font-size: 0.8rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .rationale { font-size: 0.82rem; color: var(--ink-2); }
+      .chunk-score { font-size: 0.8rem; color: var(--ink-1); font-variant-numeric: tabular-nums; }
+      .track {
+        grid-column: 1 / -1; position: relative; height: 8px;
+        background: var(--seq-track); border-radius: 4px; opacity: 0.55;
+      }
+      .fill {
+        position: absolute; inset: 0 auto 0 0; height: 8px;
+        background: var(--seq); border-radius: 4px; opacity: 1;
+      }
+      .tau-marker {
+        position: absolute; top: -3px; bottom: -3px; width: 2px;
+        background: var(--baseline);
+      }
+      .tau-note { font-size: 0.72rem; color: var(--ink-muted); margin-top: 0.4rem; }
+
+      /* latency composition — stacked, 2px surface gaps, direct labels */
+      .stack { display: flex; height: 10px; gap: 2px; margin-bottom: 0.5rem; }
+      .seg { height: 10px; border-radius: 2px; min-width: 2px; }
+      .seg:first-child { border-radius: 4px 2px 2px 4px; }
+      .seg:last-child { border-radius: 2px 4px 4px 2px; }
+      .legend { display: flex; flex-wrap: wrap; gap: 0.15rem 1rem; }
+      .legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.76rem; color: var(--ink-2); }
+      .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+      .legend-val { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+
+      /* stat tiles — headline numbers, not charts */
+      .tiles { display: flex; flex-wrap: wrap; gap: 1.4rem; }
+      .tile-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); }
+      .tile-value { font-size: 1.15rem; font-weight: 600; }
+      .tile-value .unit { font-size: 0.7rem; font-weight: 400; color: var(--ink-muted); margin-left: 0.15rem; }
+
+      table.data { border-collapse: collapse; width: 100%; font-size: 0.78rem; margin-top: 0.5rem; }
+      table.data th, table.data td { text-align: left; padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--grid); }
+      table.data th { color: var(--ink-muted); font-weight: 600; }
+      table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      details.table-view summary { font-size: 0.74rem; color: var(--ink-muted); cursor: pointer; margin-top: 0.5rem; }
+
+      form { position: fixed; left: 0; right: 0; bottom: 0; background: var(--plane); border-top: 1px solid var(--hairline); padding: 0.8rem 1rem; }
+      .form-inner { max-width: 52rem; margin: 0 auto; display: flex; gap: 0.5rem; }
+      input {
+        flex: 1; padding: 0.6rem 0.75rem; font: inherit; color: inherit;
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 0.5rem;
+      }
+      button {
+        padding: 0.6rem 1.1rem; font: inherit; font-weight: 600; color: inherit; cursor: pointer;
+        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 0.5rem;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .suggestions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.2rem; }
+      .suggestions button { font-size: 0.78rem; font-weight: 400; padding: 0.3rem 0.6rem; color: var(--ink-2); }
     </style>
   </head>
   <body>
-    <h1>glassbox</h1>
-    <p class="sub">Skeleton — proving the platform assumptions. Retrieval, refusal gating, and the judge are not wired yet.</p>
+    <div class="wrap">
+      <header>
+        <h1>glassbox</h1>
+        <p class="tagline">
+          A RAG agent over Cloudflare Registrar documentation. It refuses to guess — and shows the
+          evidence, the grade, and the cost either way.
+        </p>
+      </header>
 
-    <div id="log"></div>
+      <div class="suggestions" id="suggestions">
+        <button data-q="How long is the transfer lock after changing my registrant contact information?">transfer lock ↴</button>
+        <button data-q="What is an authorization code and where do I obtain one?">auth codes ↴</button>
+        <button data-q="How do I configure Workers KV namespaces in my application?">out of corpus ↴</button>
+      </div>
+
+      <div id="log"></div>
+    </div>
 
     <form id="form">
-      <input id="input" placeholder="Ask something…" autocomplete="off" autofocus />
-      <button id="send">Send</button>
+      <div class="form-inner">
+        <input id="input" placeholder="Ask about domain registration…" autocomplete="off" autofocus />
+        <button id="send">Ask</button>
+      </div>
     </form>
 
     <script type="module">
@@ -38,42 +205,172 @@
       const input = document.getElementById("input");
       const send = document.getElementById("send");
 
-      // Persisted per-browser so a reload lands on the same Durable Object.
+      const STAGES = [
+        { key: "embedMs", label: "embed", varName: "--s1" },
+        { key: "retrieveMs", label: "retrieve", varName: "--s2" },
+        { key: "generateMs", label: "generate", varName: "--s3" },
+        { key: "judgeMs", label: "judge", varName: "--s4" },
+      ];
+
       let session = localStorage.getItem("glassbox-session");
       if (!session) {
         session = crypto.randomUUID();
         localStorage.setItem("glassbox-session", session);
       }
 
-      function bubble(role) {
-        const el = document.createElement("div");
-        el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
-        log.append(el);
-        return el;
+      const el = (tag, cls, text) => {
+        const n = document.createElement(tag);
+        if (cls) n.className = cls;
+        if (text !== undefined) n.textContent = text;
+        return n;
+      };
+
+      function turn(role) {
+        const t = el("div", "turn");
+        t.append(el("div", "who", role));
+        const b = el("div", "bubble");
+        t.append(b);
+        log.append(t);
+        window.scrollTo(0, document.body.scrollHeight);
+        return { turn: t, bubble: b };
       }
 
-      async function loadHistory() {
-        const res = await fetch(`/api/history?session=${session}`);
-        const { messages } = await res.json();
-        for (const m of messages) bubble(m.role).querySelector(".body").textContent = m.content;
+      function badge(kind, glyph, label) {
+        const b = el("span", `badge ${kind}`);
+        b.append(el("span", "glyph", glyph), el("span", null, label));
+        return b;
       }
 
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const message = input.value.trim();
-        if (!message) return;
-        input.value = "";
-        send.disabled = true;
+      /** Retrieval evidence: one measure across ranked items, so one hue and no legend. */
+      function renderEvidence(section, chunks, tau) {
+        section.append(el("h3", null, `Retrieved evidence — top ${chunks.length} of 70 chunks`));
+        if (chunks.length === 0) {
+          section.append(el("div", "tau-note", "No chunks returned."));
+          return;
+        }
+        for (const c of chunks) {
+          const row = el("div", "chunk");
+          const part = (c.chunkId.split("#")[1] ?? "");
+          row.append(el("div", "chunk-label", `${c.docTitle || c.chunkId}${part !== "" ? ` · chunk ${part}` : ""}`));
+          row.append(el("div", "chunk-score", c.score.toFixed(3)));
+          const track = el("div", "track");
+          const fill = el("div", "fill");
+          fill.style.width = `${Math.max(0, Math.min(1, c.score)) * 100}%`;
+          track.append(fill);
+          if (tau > 0) {
+            const marker = el("div", "tau-marker");
+            marker.style.left = `${tau * 100}%`;
+            marker.title = `similarity gate τ = ${tau}`;
+            track.append(marker);
+          }
+          row.append(track);
+          section.append(row);
+        }
+        section.append(
+          el("div", "tau-note", `Scale 0–1 cosine similarity. Vertical rule marks the similarity gate τ = ${tau}.`),
+        );
+      }
 
-        bubble("you").querySelector(".body").textContent = message;
-        const out = bubble("glassbox");
-        const body = out.querySelector(".body");
+      /** Latency composition. Every segment is directly labelled — two of these hues sit below
+          3:1 on the light surface, so labels carry the identity, not colour. */
+      function renderLatency(section, timings) {
+        section.append(el("h3", null, "Where the time went"));
+        const total = STAGES.reduce((s, st) => s + (timings[st.key] || 0), 0) || 1;
 
-        const res = await fetch(`/api/chat?session=${session}`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ message }),
-        });
+        const stack = el("div", "stack");
+        for (const st of STAGES) {
+          const ms = timings[st.key] || 0;
+          if (ms <= 0) continue;
+          const seg = el("div", "seg");
+          seg.style.flex = `${ms}`;
+          seg.style.background = `var(${st.varName})`;
+          seg.title = `${st.label}: ${ms} ms`;
+          stack.append(seg);
+        }
+        section.append(stack);
+
+        const legend = el("div", "legend");
+        for (const st of STAGES) {
+          const ms = timings[st.key] || 0;
+          if (ms <= 0) continue;
+          const item = el("div", "legend-item");
+          const sw = el("span", "swatch");
+          sw.style.background = `var(${st.varName})`;
+          const val = el("span", "legend-val", `${ms} ms`);
+          item.append(sw, el("span", null, st.label), val);
+          legend.append(item);
+        }
+        section.append(legend);
+
+        // Table view — the relief for the sub-3:1 contrast warning, and useful regardless.
+        const det = el("details", "table-view");
+        det.append(el("summary", null, "table view"));
+        const table = el("table", "data");
+        const thead = el("tr");
+        thead.append(el("th", null, "stage"), el("th", null, "ms"), el("th", null, "share"));
+        table.append(thead);
+        for (const st of STAGES) {
+          const ms = timings[st.key] || 0;
+          const tr = el("tr");
+          const share = el("td", "num", `${((ms / total) * 100).toFixed(1)}%`);
+          tr.append(el("td", null, st.label), el("td", "num", String(ms)), share);
+          table.append(tr);
+        }
+        det.append(table);
+        section.append(det);
+      }
+
+      function renderCost(section, result) {
+        section.append(el("h3", null, "Cost and models"));
+        const tiles = el("div", "tiles");
+        const tile = (label, value, unit) => {
+          const d = el("div");
+          d.append(el("div", "tile-label", label));
+          const v = el("div", "tile-value", value);
+          if (unit) v.append(el("span", "unit", unit));
+          d.append(v);
+          return d;
+        };
+        tiles.append(
+          tile("neurons", String(result.neurons), "of 10,000/day"),
+          tile("total", String(result.timings.totalMs), "ms"),
+        );
+        section.append(tiles);
+        const models = el("div", "tau-note");
+        models.textContent =
+          `generator ${result.models.generator} · judge ${result.models.judge || "—"} · embedder ${result.models.embedder || "—"}`;
+        section.append(models);
+      }
+
+      async function ask(question) {
+        turn("you").bubble.textContent = question;
+
+        const { bubble } = turn("glassbox");
+        const answerEl = el("div", "answer");
+        bubble.append(answerEl);
+
+        const panel = el("div", "panel");
+        const head = el("div", "panel-head");
+        head.append(el("span", "panel-title", "evaluation"));
+        const status = el("span");
+        head.append(status);
+        panel.append(head);
+        bubble.append(panel);
+
+        const evidence = el("div", "section");
+        panel.append(evidence);
+
+        let res;
+        try {
+          res = await fetch(`/api/chat?session=${session}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ message: question }),
+          });
+        } catch {
+          answerEl.textContent = "network error";
+          return;
+        }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -87,24 +384,68 @@
           buf = lines.pop() ?? "";
           for (const line of lines) {
             if (!line.startsWith("data:")) continue;
-            const evt = JSON.parse(line.slice(5));
-            if (evt.type === "token") body.textContent += evt.delta;
-            if (evt.type === "error") body.textContent = `error: ${evt.message}`;
-            if (evt.type === "done") {
-              const t = evt.result.timings;
-              const meta = document.createElement("div");
-              meta.className = "meta";
-              meta.textContent =
-                `generate ${t.generateMs}ms · total ${t.totalMs}ms · ${evt.result.neurons} neurons`;
-              out.append(meta);
+            let evt;
+            try { evt = JSON.parse(line.slice(5)); } catch { continue; }
+
+            if (evt.type === "retrieval") {
+              // Evidence lands before any answer text — the panel fills in first, on purpose.
+              renderEvidence(evidence, evt.chunks, 0.62);
+            } else if (evt.type === "token") {
+              answerEl.textContent += evt.delta;
+              window.scrollTo(0, document.body.scrollHeight);
+            } else if (evt.type === "refusal") {
+              const why = evt.reason === "low_similarity"
+                ? `nothing retrieved above the similarity gate (best ${evt.maxScore.toFixed(3)} < τ ${evt.tau})`
+                : "the retrieved passages do not answer this question";
+              answerEl.textContent = `Refused — ${why}.`;
+              status.replaceChildren(badge("warning", "⊘", "refused"));
+            } else if (evt.type === "judge") {
+              const v = evt.verdict;
+              status.replaceChildren(
+                badge(v.supported ? "good" : "critical", v.supported ? "✓" : "✕",
+                  `${v.supported ? "grounded" : "unsupported"} · ${v.score.toFixed(2)}`),
+              );
+              const s = el("div", "section");
+              s.append(el("h3", null, "Faithfulness verdict"));
+              s.append(el("div", "rationale", v.rationale || "—"));
+              panel.append(s);
+            } else if (evt.type === "done") {
+              const s1 = el("div", "section");
+              renderLatency(s1, evt.result.timings);
+              panel.append(s1);
+              const s2 = el("div", "section");
+              renderCost(s2, evt.result);
+              panel.append(s2);
+              if (!status.hasChildNodes()) {
+                status.replaceChildren(badge("muted", "·", "no verdict"));
+              }
+            } else if (evt.type === "error") {
+              answerEl.textContent = `error: ${evt.message}`;
+              status.replaceChildren(badge("critical", "✕", "error"));
             }
           }
         }
+        window.scrollTo(0, document.body.scrollHeight);
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const q = input.value.trim();
+        if (!q) return;
+        input.value = "";
+        send.disabled = true;
+        await ask(q);
         send.disabled = false;
         input.focus();
       });
 
-      loadHistory();
+      document.getElementById("suggestions").addEventListener("click", async (e) => {
+        const q = e.target.dataset?.q;
+        if (!q) return;
+        send.disabled = true;
+        await ask(q);
+        send.disabled = false;
+      });
     </script>
   </body>
 </html>
