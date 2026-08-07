@@ -3388,3 +3388,264 @@ run just the credential patterns (which need no configuration).
 
 </details>
 
+Let me confirm that guard actually exits non-zero — the `exit=0` above was `tail`'s status, not npm's:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+mv scripts/redactions.local.json /tmp/rl.json
+npm ru
+… [535 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+  exit without config, no flag: 1  (expect 1)
+  exit without config, --credentials-only: 0  (expect 0)
+  exit with config: 0  (expect 0)
+
+=== regenerate transcript to include this session ===
+Wrote /home/sethz/projects/glassbox/transcripts/PROMPT_HISTORY.md
+  sessions: 1   prompts: 9   entries: 478
+  redactions:
+    private-planning-doc                   33
+    private-planning-doc (whole tool result) 10
+    oauth-pkce                             4
+    email-address                          4
+Checked 30 private phrase(s) and 6 credential pattern(s) against 138,139 characters.
+All clear.
+```
+
+</details>
+
+All three exit codes correct, and the transcript now covers 9 prompts / 478 entries with the leak check clean. Landing it through a PR:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+git checkout -q -b ci/tier-1
+git add -A
+git commit -
+… [2702 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+remote:      https://github.com/seth-zapata/glassbox/pull/new/ci/tier-1        
+remote: 
+https://github.com/seth-zapata/glassbox/pull/1
+```
+
+</details>
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+echo "=== waiting for CI ==="
+timeout 300 gh run wat
+… [183 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+=== waiting for CI ===
+  ✓ Post Run actions/setup-node@v4
+  ✓ Post Run actions/checkout@v4
+  ✓ Complete job
+
+ANNOTATIONS
+! Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-node@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+verify: .github#2
+
+
+=== check result ===
+verify	pass	13s	https://github.com/seth-zapata/glassbox/actions/runs/31213580118/job/92981829724
+```
+
+</details>
+
+CI passes in 13s, but it's throwing a deprecation annotation on every run. Clearing that before merge rather than leaving a warning on the demonstration piece:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+sed -i 's|actions/checkout@v4|actions/checkout@v5|; 
+… [926 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+29:      - uses: actions/checkout@v5
+31:      - uses: actions/setup-node@v5
+=== rerun ===
+no checks reported on the 'ci/tier-1' branch
+
+=== annotations now? ===
+10
+```
+
+</details>
+
+Run ID was captured before the push registered. Checking actual current state:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+echo "=== recent runs ==="; gh run list --branch ci/
+… [726 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+=== recent runs ===
+  31213637573  3f3a1d9  in_progress/
+  31213580118  345bc4b  completed/success
+
+=== watching 31213637573 ===
+  exit=0
+
+=== deprecation annotations on latest run ===
+
+=== PR checks ===
+verify	pass	9s	https://github.com/seth-zapata/glassbox/actions/runs/31213637573/job/92982009493
+```
+
+</details>
+
+Green in 9s, no annotations. Merging, then applying the ruleset — which requires the check to exist before it can be named as required:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+gh pr merge 1 --squash --delete-branch 2>&1 | tail -
+… [1044 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+ create mode 100644 .github/workflows/ci.yml
+ create mode 100644 tsconfig.json
+=== history ===
+ca55e6e ci: Tier 1 deterministic checks + close leak-checker false-green (#1)
+e16ae77 docs: remove references to a private planning document
+e62ca50 docs: record repository setup, workflow, and transcript-tooling bugs (#1)
+dcb81b4 Initial commit: design, transcript tooling, and project scaffolding
+
+=== apply ruleset: PR required + verify must pass ===
+  protect-main: active  (id=20569351)
+```
+
+</details>
+
+Ruleset active. Testing that it actually blocks — an unenforced rule is worse than none:
+
+```text
+⚙ Bash — export NVM_DIR="$HOME/.nvm"; . "$NVM_DIR/nvm.sh" >/dev/null 2>&1; hash -r; cd /home/sethz/projects/glassbox
+echo "test" > .ruleset-probe
+git add .ruleset-probe 
+… [489 more characters]
+```
+
+<details><summary>result</summary>
+
+```text
+=== attempting direct push to main (expect REJECTION) ===
+remote: error: GH013: Repository rule violations found for refs/heads/main.        
+remote: Review all repository rules at https://github.com/seth-zapata/glassbox/rules?ref=refs%2Fheads%2Fmain        
+remote: 
+remote: - Changes must be made through a pull request.        
+remote: 
+remote: - Required status check "verify" is expected.        
+remote: 
+ ! [remote rejected] main -> main (push declined due to repository rule violations)
+  push exit: 1
+
+=== rolling the probe back ===
+ca55e6e ci: Tier 1 deterministic checks + close leak-checker false-green (#1)
+
+=== ruleset summary ===
+  - deletion
+  - non_fast_forward
+  - pull_request
+  - required_status_checks
+```
+
+</details>
+
+Rejected exactly as intended, both rules cited. Updating the docs, which now understate the setup:
+
+```text
+⚙ Read — /home/sethz/projects/glassbox/docs/DESIGN.md
+```
+
+<details><summary>result</summary>
+
+```text
+635	
+636	## 14. Repository and workflow
+637	
+638	Set up **before** any application code, deliberately. If the repo were initialized after the
+639	skeleton existed, the history would open with one large unexplained commit — the exact shape
+640	that reads as unreviewed bulk generation.
+641	
+642	**Repo:** `seth-zapata/glassbox` — **private during the build, public at submission.** Full
+643	history is preserved when it flips, so nothing is lost by waiting, and it leaves room to correct
+644	an accidental credential commit before the content is permanently public and indexed.
+645	
+646	**Commit identity:** the account's GitHub `users.noreply` address. Attributes to the GitHub
+647	account and counts toward the contribution graph without putting a personal address in a public
+648	repository's permanent history. Set repo-locally, not globally — the machine's global git
+649	identity is a separate decision.
+650	
+651	**Branch protection is not yet enforced.** GitHub rulesets require Pro or a public repository
+652	(verified: `POST /repos/.../rulesets` returns 403 while private). Until the flip, PR-only is a
+653	convention. Run this at the moment the repo goes public, so the CI gate is actually binding:
+654	
+655	```sh
+656	gh repo edit seth-zapata/glassbox --visibility public --accept-visibility-change-consequences
+657	gh api -X POST repos/seth-zapata/glassbox/rulesets \
+658	  -f name='require-pr-to-main' -f target='branch' -f enforcement='active' \
+659	  -F 'conditions[ref_name][include][]=~DEFAULT_BRANCH' \
+660	  -F 'rules[][type]=pull_request'
+661	```
+662	
+663	### Prompt-history pipeline
+664	
+665	| Command | Does |
+666	|---|---|
+667	| `npm run transcript` | Renders all session logs → `transcripts/PROMPT_HISTORY.md`, merging both transcript directories in timestamp order |
+668	| `npm run transcript:check` | Fails if any private phrase or credential pattern survived |
+669	
+670	Three bugs found while building this, worth recording because each was silent:
+671	
+672	1. **Every tool result was being dropped.** The render loop skipped non-`assistant` entries, but
+673	   tool results arrive as `user` entries — so 88 of them vanished. The output looked clean
+674	   because it was nearly empty, which is the most dangerous kind of passing check.
+```
+
+</details>
+
+```text
+⚙ Edit — /home/sethz/projects/glassbox/docs/DESIGN.md
+```
+
+<details><summary>result</summary>
+
+```text
+The file /home/sethz/projects/glassbox/docs/DESIGN.md has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+
+```text
+⚙ Edit — /home/sethz/projects/glassbox/README.md
+```
+
+<details><summary>result</summary>
+
+```text
+The file /home/sethz/projects/glassbox/README.md has been updated successfully. (file state is current in your context — no need to Read it back)
+```
+
+</details>
+

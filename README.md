@@ -72,15 +72,15 @@ npm run whoami         # confirm authentication
 This repository is also a demonstration of a continuous-integration workflow, so the process is
 part of the deliverable rather than incidental to it.
 
-- **`main` is never committed to directly.** Every change lands through a pull request. While
-  this repository is private, that is enforced by convention rather than mechanically —
-  GitHub branch rulesets require Pro or a public repository. The ruleset is applied at the same
-  moment the repository is made public; the exact command is in
-  [`docs/DESIGN.md`](docs/DESIGN.md) §14 so it isn't reconstructed from memory later.
-- **Two CI tiers.** Every PR runs typecheck, lint, unit tests, and the evaluation suite replayed
-  against committed fixtures — no credentials, no model calls, and it **blocks the merge** if a
-  metric drops below its committed floor. A second tier runs the live evaluation against real
-  models on demand, because it costs against a metered daily budget.
+- **`main` cannot be committed to directly.** A branch ruleset requires a pull request and a
+  passing `verify` check; a direct push is rejected with `GH013`. Force-pushes and branch
+  deletion are blocked too.
+- **Two CI tiers.** Tier 1 runs on every PR — typecheck and a credential scan of the committed
+  transcript today, growing to unit tests, eval-set validation, and the evaluation replay gate
+  as the code lands. No credentials and no model calls, so it runs on forks and **blocks the
+  merge**. Tier 2 runs the live evaluation against real models on demand.
+- **CI never claims coverage it doesn't have.** Checks are added alongside the things they
+  verify, not written in advance against code that doesn't exist yet.
 - **Why the split:** the free-tier allocation is 10,000 neurons/day, and a live evaluation run
   costs roughly 3,700 of them. Running that on every push would exhaust the budget and take the
   deployed demo down with it. A gate that can break the service it guards is not a gate. See
