@@ -484,6 +484,73 @@
         panel.append(det);
       }
 
+      /**
+       * Render a complete evaluation panel from a recorded envelope.
+       *
+       * Used when restoring past turns. The live path builds its panel incrementally as events
+       * arrive; this renders the same sections from the stored result, so what you see after a
+       * reload matches what you saw while it streamed.
+       */
+      function buildPanel(result, refusalReason, restored) {
+        const panel = el("div", "panel");
+        const strip = el("div", "strip");
+        strip.append(el("span", "strip-label", "evaluation"));
+
+        if (refusalReason) {
+          strip.append(badge("warning", "⊘", `refused · ${refusalReason.replace(/_/g, " ")}`));
+        } else if (result?.judge) {
+          const v = result.judge;
+          strip.append(badge(v.supported ? "good" : "critical", v.supported ? "✓" : "✕",
+                             `${v.supported ? "grounded" : "unsupported"} · ${v.score.toFixed(2)}`));
+        } else {
+          strip.append(badge("muted", "·", "no verdict"));
+        }
+
+        if (result) {
+          const stats = el("span", "legend");
+          const stat = (label, val) => {
+            const sp = el("span", "stat");
+            sp.append(el("b", "mono", val), el("span", null, label));
+            return sp;
+          };
+          stats.append(stat("ms", String(result.timings.totalMs)), stat("neurons", String(result.neurons)));
+          strip.append(stats);
+        }
+        panel.append(strip);
+
+        if (!result) {
+          const note = el("div", "section");
+          note.append(el("div", "scale-note",
+            "No evaluation trace was recorded for this turn."));
+          panel.append(note);
+          return panel;
+        }
+
+        const evidence = el("div", "section");
+        renderEvidence(evidence, result.retrieval);
+        panel.append(evidence);
+
+        if (result.judge) {
+          const v = el("div", "section");
+          v.append(el("h3", null, "Faithfulness verdict"), el("div", "rationale", result.judge.rationale || "—"));
+          panel.append(v);
+        }
+
+        const timing = el("div", "section");
+        renderTiming(timing, result.timings);
+        panel.append(timing);
+
+        renderMore(panel, result);
+
+        if (restored) {
+          const note = el("div", "section");
+          note.append(el("div", "scale-note",
+            "Restored from Durable Object storage. Passage text is not carried in the restore payload — it is not displayed here in either case."));
+          panel.append(note);
+        }
+        return panel;
+      }
+
       async function ask(question) {
         starters.hidden = true;
         questionCard(question);
@@ -650,27 +717,9 @@
               const refused = m.refusalReason !== null && m.refusalReason !== undefined;
               const c = card("glassbox");
               const body = el("div", "card-body");
-              const ans = el("div", `answer${refused ? " refused" : ""}`, m.content);
-              body.append(ans);
+              body.append(el("div", `answer${refused ? " refused" : ""}`, m.content));
               c.append(body);
-
-              const panel = el("div", "panel");
-              const strip = el("div", "strip");
-              strip.append(el("span", "strip-label", "evaluation"));
-              // A restored turn shows the outcome it recorded, and says plainly that the
-              // measurements behind it are not being replayed — the panel must never imply it
-              // measured something it did not.
-              strip.append(
-                refused
-                  ? badge("warning", "⊘", `refused · ${m.refusalReason.replace(/_/g, " ")}`)
-                  : badge("muted", "·", "restored"),
-              );
-              panel.append(strip);
-              const note = el("div", "section");
-              note.append(el("div", "scale-note",
-                "Restored from Durable Object storage. Evidence, verdict and timings are recorded per turn but are not replayed here."));
-              panel.append(note);
-              c.append(panel);
+              c.append(buildPanel(m.trace, m.refusalReason ?? null, true));
             }
           }
         } catch {
