@@ -1,0 +1,9 @@
+{
+  "_comment": "Copy to redactions.local.json (gitignored) and fill in. Credential patterns are built into export-transcript.ts and are always applied — this file only adds project-specific removals.",
+  "filePaths": [
+    "path-or-filename.md — any tool result reading one of these is dropped whole, matched by the originating call's target"
+  ],
+  "phrases": [
+    "literal strings to remove wherever they appear, matched case-insensitively"
+  ]
+}

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+.env.*
+*.log
+.DS_Store
+
+# Private planning document — referenced during scoping, not part of this project
+ASSIGNMENT_SPEC.md
+cloudflare_registrar_assignment_spec.md
+
+# Redaction phrase list — would restate the content it removes
+scripts/redactions.local.json
