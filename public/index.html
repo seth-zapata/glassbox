@@ -313,7 +313,7 @@
         <button class="starter" data-q="How do I configure Workers KV namespaces in my application?">
           <span class="kind refuse">refusal</span>
           <span class="q">How do I configure Workers KV namespaces in my application?</span>
-          <span class="why">A Cloudflare product, but not registrar — expect a refusal costing 0.09 neurons.</span>
+          <span class="why">A Cloudflare product, but not in this corpus. The model knows the answer from pretraining — it refuses anyway, for 0.09 neurons.</span>
         </button>
         <button class="starter" data-q="How long is the lock?">
           <span class="kind ambig">ambiguous</span>
@@ -564,11 +564,9 @@
               scrollDown();
             } else if (evt.type === "refusal") {
               answerEl.classList.add("refused");
-              setText(
-                evt.reason === "low_similarity"
-                  ? `Refused. Nothing in the corpus scored above the similarity gate — best match ${evt.maxScore.toFixed(3)}, gate ${evt.tau}.`
-                  : "Refused. The retrieved passages do not answer this question.",
-              );
+              // The server owns the wording so the live stream, the persisted turn and the
+              // restored view cannot drift apart.
+              setText(evt.message ?? "Refused.");
               verdictSlot.replaceChildren(badge("warning", "⊘", "refused"));
             } else if (evt.type === "judge") {
               const v = evt.verdict;

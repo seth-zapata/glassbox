@@ -36,6 +36,23 @@ from a command anyone can re-run.
 Refusal rate alone is meaningless — an agent that refuses everything scores 100%. It is only
 informative next to the false-refusal rate it trades against.
 
+### Scope — and why an in-house question still gets refused
+
+The corpus is **Cloudflare Registrar documentation only**. Asking *"how do I configure Workers
+KV namespaces?"* is refused, and that is the design working rather than failing.
+
+The generator knows what Workers KV is from pretraining. If it answered, the reply would appear
+directly above an evidence panel showing six retrieved chunks about **domain transfers** — fluent,
+confident, and completely ungrounded. That is precisely the failure this project exists to make
+visible, and it is worse than a refusal because it *looks* sourced.
+
+It is also the hardest refusal to get right: same company, same documentation site, plainly
+adjacent. It scored **0.596**, the closest match in a registrar corpus to a question about a
+storage product. That case is `oc-01` in the eval set for exactly this reason.
+
+Refusals name the boundary rather than just reporting a threshold, so a dead end becomes a
+redirection.
+
 ### The interesting result: similarity alone cannot do this
 
 There are two refusal gates — a similarity threshold, and a sentinel the model emits when the

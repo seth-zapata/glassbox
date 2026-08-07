@@ -15,6 +15,7 @@ import { chunkDocument, parseCorpusFile, type CorpusDoc } from "../src/agent/chu
 import { parseVerdict, extractText, JUDGE } from "../src/agent/judge.ts";
 import { declined, neuronsFor, replayableContext, INSUFFICIENT } from "../src/agent/generate.ts";
 import { belowThreshold, DEFAULT_TAU } from "../src/agent/retrieve.ts";
+import { refusalMessage, CORPUS_SCOPE } from "../src/shared/scope.ts";
 
 const doc = (body: string): CorpusDoc => ({
   id: "d",
@@ -245,5 +246,28 @@ describe("replayableContext", () => {
       msg("assistant", "Refused.", "low_similarity"),
     ]);
     assert.equal(ctx.filter((m) => m.role === "user").length, 0);
+  });
+});
+
+describe("refusalMessage", () => {
+  test("names the scope, so a refusal redirects instead of dead-ending", () => {
+    const m = refusalMessage("low_similarity", 0.596, 0.62);
+    assert.match(m, /Cloudflare Registrar/);
+    assert.match(m, /0\.596/);
+    assert.match(m, /0\.62/);
+  });
+
+  test("distinguishes the two gates", () => {
+    const gated = refusalMessage("low_similarity", 0.4, 0.62);
+    const declined = refusalMessage("model_declined", 0.8, 0.62);
+    assert.match(gated, /nothing in the corpus is close enough/i);
+    assert.match(declined, /none of them answer/i);
+    assert.notEqual(gated, declined);
+  });
+
+  test("never claims an answer was produced", () => {
+    for (const r of ["low_similarity", "model_declined"] as const) {
+      assert.match(refusalMessage(r, 0.5, 0.62), /^Refused/);
+    }
   });
 });
