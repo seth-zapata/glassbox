@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>glassbox</title>
+    <style>
+      :root { color-scheme: light dark; --line: color-mix(in srgb, currentColor 15%, transparent); }
+      body {
+        font: 15px/1.55 ui-sans-serif, system-ui, -apple-system, sans-serif;
+        max-width: 46rem; margin: 0 auto; padding: 2rem 1rem 6rem;
+      }
+      h1 { font-size: 1.1rem; margin: 0 0 .25rem; }
+      .sub { opacity: .65; font-size: .85rem; margin: 0 0 1.5rem; }
+      #log > div { padding: .7rem .9rem; border: 1px solid var(--line); border-radius: .5rem; margin-bottom: .6rem; }
+      .role { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; opacity: .55; margin-bottom: .3rem; }
+      .meta { font-size: .78rem; opacity: .7; font-family: ui-monospace, monospace; white-space: pre-wrap; }
+      form { display: flex; gap: .5rem; margin-top: 1rem; }
+      input { flex: 1; padding: .6rem .7rem; font: inherit; border: 1px solid var(--line); border-radius: .5rem; background: transparent; color: inherit; }
+      button { padding: .6rem 1rem; font: inherit; border-radius: .5rem; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+      button:disabled { opacity: .5; cursor: default; }
+    </style>
+  </head>
+  <body>
+    <h1>glassbox</h1>
+    <p class="sub">Skeleton — proving the platform assumptions. Retrieval, refusal gating, and the judge are not wired yet.</p>
+
+    <div id="log"></div>
+
+    <form id="form">
+      <input id="input" placeholder="Ask something…" autocomplete="off" autofocus />
+      <button id="send">Send</button>
+    </form>
+
+    <script type="module">
+      const log = document.getElementById("log");
+      const form = document.getElementById("form");
+      const input = document.getElementById("input");
+      const send = document.getElementById("send");
+
+      // Persisted per-browser so a reload lands on the same Durable Object.
+      let session = localStorage.getItem("glassbox-session");
+      if (!session) {
+        session = crypto.randomUUID();
+        localStorage.setItem("glassbox-session", session);
+      }
+
+      function bubble(role) {
+        const el = document.createElement("div");
+        el.innerHTML = `<div class="role">${role}</div><div class="body"></div>`;
+        log.append(el);
+        return el;
+      }
+
+      async function loadHistory() {
+        const res = await fetch(`/api/history?session=${session}`);
+        const { messages } = await res.json();
+        for (const m of messages) bubble(m.role).querySelector(".body").textContent = m.content;
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const message = input.value.trim();
+        if (!message) return;
+        input.value = "";
+        send.disabled = true;
+
+        bubble("you").querySelector(".body").textContent = message;
+        const out = bubble("glassbox");
+        const body = out.querySelector(".body");
+
+        const res = await fetch(`/api/chat?session=${session}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = "";
+
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data:")) continue;
+            const evt = JSON.parse(line.slice(5));
+            if (evt.type === "token") body.textContent += evt.delta;
+            if (evt.type === "error") body.textContent = `error: ${evt.message}`;
+            if (evt.type === "done") {
+              const t = evt.result.timings;
+              const meta = document.createElement("div");
+              meta.className = "meta";
+              meta.textContent =
+                `generate ${t.generateMs}ms · total ${t.totalMs}ms · ${evt.result.neurons} neurons`;
+              out.append(meta);
+            }
+          }
+        }
+        send.disabled = false;
+        input.focus();
+      });
+
+      loadHistory();
+    </script>
+  </body>
+</html>

@@ -128,4 +128,4 @@ legible and functional. The time went into measurement instead.
 
 ## License
 
-TBD.
+[MIT](LICENSE)

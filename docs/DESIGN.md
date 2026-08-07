@@ -109,6 +109,42 @@ A full 30-case eval run costs ~3,700 neurons (the 8 out-of-corpus cases refuse a
 gate and never reach a model, which is free). So: **~2.6 full eval runs per day**, before any
 manual demoing. Corpus ingest is a one-time ~120 neurons — negligible.
 
+#### ✅ Measured 2026-08-07 — the estimate above was ~3× pessimistic
+
+Against the deployed skeleton, with a ~1,700-token prompt standing in for six retrieved chunks:
+
+| | Estimated | Measured |
+|---|---|---|
+| Neurons per generation | ~118 | **40.1** |
+| Answered turns/day (generate only) | ~85 | **~249** |
+| Full eval run (22 cases reach a model) | ~3,700 | **~880** |
+| Eval runs/day | ~2.6 | **~11** |
+
+**The gap is output length, not context size**, and that is the useful finding. Output tokens
+cost **204,805 neurons/M against 26,668/M for input — 7.7× more per token.** The estimate
+assumed 250-token answers; real answers ran 25–40 tokens. So the dominant lever on cost is how
+long the model is allowed to talk, not how much context it is given. For grounded QA that is
+nearly free to control: a short-answer instruction plus a `max_tokens` cap costs no quality and
+cuts the bill several-fold. Retrieving *more* context is cheaper than answering at length.
+
+**This weakens one of Decision 7's arguments, and the decision should not rest on it.** At ~11
+eval runs/day rather than 2.6, a single live run in CI is no longer near-fatal. Record/replay
+still stands, on the two reasons that survive measurement:
+
+1. **Fork PRs have no credentials.** A live eval simply cannot run there, so it can never be the
+   gate that blocks a merge.
+2. **A gate must not be able to exhaust the service it guards.** A busy day is easily 20+ pushes;
+   at ~880 neurons each that is still the whole daily budget, and the failure mode is the
+   deployed demo hard-failing rather than degrading.
+
+The original "2.6 runs/day" framing overstated the case. Recording the correction rather than
+quietly benefiting from a number that happened to point the right way.
+
+⚠️ **Caveat on how this is counted.** `neurons` is computed from the token counts Workers AI
+returns, multiplied by published per-model rates. It is not read back from Cloudflare's billing.
+Treat it as a well-founded estimate; cross-check against account usage before quoting it as
+fact in the README.
+
 Three consequences, all of which improve the design:
 
 1. **The eval suite cannot run live on every PR.** Forced into a record/replay architecture —
@@ -136,10 +172,18 @@ believed.
 | V2 | OAuth login completes on WSL2 | ✅ Callback binds `127.0.0.1:8976`, WSL NAT localhost-forwarding delivers the redirect. Credential at `~/.config/.wrangler/config/default.toml`, mode 600 |
 | V3 | **Vectorize is authorized by OAuth** | ✅ **Confirmed by probe.** No `vectorize` scope exists in wrangler's OAuth scope list, which looked like a blocker — but `vectorize list` *and* `vectorize create` both succeed. Covered by the account-level Workers grant. **No API token needed for local dev** |
 | V4 | Vectorize index provisions on the free plan | ✅ `glassbox-corpus`, 768 dims, cosine — created and listed |
-| V5 | D1 provisions | ⏳ pending |
-| V6 | Workers AI responds, and neuron accounting matches §2b estimates | ⏳ pending |
-| V7 | DO with SQLite deploys and persists | ⏳ pending |
-| V8 | DO → Worker streaming passes through unbuffered (Decision 1 depends on it) | ⏳ pending |
+| V5 | D1 provisions | ✅ `glassbox-evals` created (region WNAM) |
+| V6 | Workers AI responds, and neuron accounting matches §2b estimates | ⚠️ **Responds — but the estimate was ~3× pessimistic.** Measured 40.1 neurons where 118 was predicted; output length dominates cost, not context size. See §2b |
+| V7 | DO with SQLite deploys and persists | ✅ Turn 2 recalled a fact from turn 1 across separate HTTP requests; `/api/history` returns it on a third; a different session id sees zero messages |
+| V8 | **DO → Worker streaming passes through unbuffered** (Decision 1 depends on it) | ✅ **Confirmed.** SSE frames arrive at distinct timestamps, not batched. The `retrieval` event lands **345 ms before the first token** — the progressive reveal works as designed |
+
+All four bindings resolve on the deployed Worker: `CHAT_AGENT` (Durable Object), `DB` (D1),
+`VECTORIZE`, `AI`, `ASSETS`. Live at `https://glassbox.glassbox.workers.dev`.
+
+**V8 was the one that could have forced a redesign**, and it passed: a `ReadableStream` returned
+from a Durable Object reaches the client incrementally through the parent Worker, so the
+hand-rolled SSE protocol in Decision 1 is viable and the fallback (buffer in the DO, stream from
+the Worker) is not needed.
 
 **Index committed to:** `glassbox-corpus` · 768 dimensions · cosine. Dimensions are fixed at
 creation and cannot be changed, so this locks the embedding model to
@@ -390,6 +434,25 @@ Two properties fall out of this that a paid plan would have let me miss:
 The honest README framing: *the free-tier constraint pushed me into record/replay, and it turned
 out to be the right architecture regardless.* That's a better story than an unconstrained build,
 and it's true.
+
+### Decision 8 — Raw `DurableObject`, not the Agents SDK
+
+Decision 1 rejected `AIChatAgent` but kept the SDK's plain `Agent` base class. Building the
+skeleton made it clear that was half a decision.
+
+What the Agents SDK adds over a raw Durable Object is `routeAgentRequest`, client state sync via
+`setState`/`onStateChanged`, `this.schedule`, and WebSocket lifecycle helpers. **This design uses
+none of them** — it defines its own HTTP + SSE protocol (Decision 1), keeps conversation state
+server-side in SQLite rather than syncing it to clients, and has nothing to schedule. What would
+remain is `this.sql` as a tagged-template wrapper over `ctx.storage.sql.exec`, which is a
+convenience, not an architecture.
+
+So the SDK would be a dependency and an abstraction layer carried for a nicer SQL call. Extending
+`DurableObject` from `cloudflare:workers` directly is fewer moving parts, and it satisfies the
+"Durable Objects" component more plainly — the DO *is* the coordination primitive, not something
+underneath a framework that is doing the coordinating.
+
+*Revisit if:* multi-client state sync or scheduled work enters scope. Neither is planned.
 
 ---
 

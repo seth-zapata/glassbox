@@ -4,16 +4,14 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022"],
-    "types": ["node"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
-    "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true
   },
-  "include": ["scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
 }
