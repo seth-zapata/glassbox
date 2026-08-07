@@ -32,7 +32,7 @@ The one-line pitch for the README:
 
 ### Why this corpus
 
-The spec doesn't pick a corpus. This is the highest-leverage open choice in the whole build, so
+The assignment doesn't pick a corpus. This is the highest-leverage open choice in the whole build, so
 it's decided here: **the corpus is domain registration itself.** Registrar transfer policy, EPP
 status codes, grace periods (AGP/RGP), redemption and pending-delete, WHOIS/RDAP, DNSSEC DS
 records, registrar-of-record vs. reseller.
@@ -63,7 +63,7 @@ the design:
 
 | Finding | Detail | Impact |
 |---|---|---|
-| Llama 3.3 exists and the spec's model guess was right | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Use it as the generator |
+| Llama 3.3 exists and the suggested model is available | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | Use it as the generator |
 | …but its context window is **24,000 tokens** | $0.29/M in, $2.25/M out | Real constraint — caps retrieved context. Budget ~6 chunks × ~400 tokens |
 | Agents SDK is a layer **over** Durable Objects | `Agent` extends DO; `new_sqlite_classes` migration; `this.sql`, `this.setState`, `this.schedule` | Using it still satisfies the "Durable Objects" requirement |
 | `AIChatAgent` auto-persists chat history to DO SQLite | `@cloudflare/ai-chat` + `agents` + `ai` packages, `useAgentChat` React hook | Tempting shortcut — but see Decision 1 |
@@ -71,7 +71,7 @@ the design:
 | `env.AI.autorag()` binding is **deprecated** | Docs say "no longer recommended" | Don't follow older tutorials |
 | Vectorize limits | max **1536** dims; topK **50** with metadata / 100 without; 10 KiB metadata/vector; **10** metadata indexes; 64 B per indexed metadata value | Fits comfortably; the 64 B indexed-metadata cap matters for filter keys |
 | Embedding models available | `@cf/baai/bge-base-en-v1.5` (768), `@cf/baai/bge-m3` (1024), `@cf/baai/bge-reranker-base` | A reranker exists on-platform — cheap upgrade path |
-| **Pages is legacy for new projects** | Cloudflare's own guidance: start new projects on Workers; all investment goes to Workers static assets | **Deviate from the spec here** — use Workers static assets, not Pages |
+| **Pages is legacy for new projects** | Cloudflare's own guidance: start new projects on Workers; all investment goes to Workers static assets | **Deviate from the brief here** — use Workers static assets, not Pages |
 | Judge-model diversity is free | `@cf/openai/gpt-oss-120b`, `@cf/qwen3-30b-a3b-fp8`, `@cf/mistral-small-3.1-24b-instruct` all available | Judge with a *different* model than the generator (Decision 5) |
 
 ---
@@ -116,8 +116,8 @@ Three consequences, all of which improve the design:
    get away with.
 2. **The judge drops from `gpt-oss-120b` to `gpt-oss-20b`.** Still a different model family from
    the generator, so Decision 5's anti-self-preference property holds, at ~⅓ the neuron cost.
-3. **The generator stays Llama 3.3 70B.** It's 70% of the per-turn cost, but it's the spec's
-   recommendation and answer quality is the demo. Cut cost elsewhere, not here.
+3. **The generator stays Llama 3.3 70B.** It's 70% of the per-turn cost, but it's the recommended
+   model and answer quality is the demo. Cut cost elsewhere, not here.
 
 A neuron-spend line goes in the eval CLI output. Reporting your own resource consumption is
 on-theme for a self-measuring app, and it's a genuinely useful guardrail against burning the
@@ -256,7 +256,7 @@ type TurnResult = {
 
 ## 4. Required components → implementation
 
-This table goes in the README verbatim, per the spec's done-criteria.
+This table goes in the README verbatim — the assignment requires each component be named.
 
 | Required | Implementation | Where it lives |
 |---|---|---|
@@ -272,10 +272,10 @@ This table goes in the README verbatim, per the spec's done-criteria.
 
 ### Decision 1 — Plain `Agent` + our own SSE protocol, not `AIChatAgent`
 
-*(Revised. The first draft cut streaming entirely, on the spec's §5 authority. Overruled on UX
+*(Revised. The first draft cut streaming entirely, on scope-discipline grounds. Overruled on UX
 grounds: streaming is what makes an LLM app feel alive, and its absence reads as broken rather
-than as minimal. That's a real product argument, and the spec's §5 was written as a
-time-budget guard, not a UX position.)*
+than as minimal. That's a real product argument, and the cut had been
+a time-budget guard, not a UX position.)*
 
 `AIChatAgent` gives free history persistence, WebSocket transport, stream resumption, and a React
 hook. It is the idiomatic path and it is genuinely less code.
@@ -317,14 +317,14 @@ most of day 2.
    against a held-out set (§6). I need raw scores from a scoring function I control.
 
 **This rejection goes in the README.** "I evaluated AI Search and chose not to use it, because
-X" is exactly the judgment signal §2 of the spec says the transcript is being read for.
+X" is exactly the kind of judgment the submitted history should show.
 
 ### Decision 3 — Workers static assets, not Pages
 
 The spec says "Pages (or Worker static assets)." Cloudflare's own current guidance is to start
 new projects on Workers; Pages remains supported but all new investment goes to Workers static
 assets. Single `wrangler deploy`, one config file, one URL, no split between a Pages project and
-a Worker. Taking their current recommendation over the spec's older framing.
+a Worker. Taking their current recommendation over the older framing.
 
 ### Decision 4 — Two-gate refusal, both measured separately
 
@@ -418,7 +418,7 @@ Each case: `{ id, bucket, question, expectedRefusal, mustCiteDocIds?, mustContai
 | Latency p50/p95 by stage | embed / retrieve / generate / judge | panel (per turn) + CLI |
 | Gate attribution | Which gate fired on each refusal | CLI |
 
-Retrieval hit rate and MRR aren't in the spec's list. They're cheap once `mustCiteDocIds` exists,
+Retrieval hit rate and MRR aren't strictly required. They're cheap once `mustCiteDocIds` exists,
 and they separate "retrieval failed" from "generation failed" — without them, a bad faithfulness
 number is unattributable.
 
@@ -543,7 +543,7 @@ I never need to see either credential.
 
 **Verified today:** Claude Code writes a live JSONL transcript per session to
 `~/.claude/projects/<slugified-cwd>/<session-uuid>.jsonl`. This session is
-`-home-sethz-projects/c7cffd19-211c-4b9b-b92e-0913ffa5e1fe.jsonl`. §2.4 of the spec is
+`-home-sethz-projects/c7cffd19-211c-4b9b-b92e-0913ffa5e1fe.jsonl`. The prompt-history requirement is
 satisfied — export is possible, confirmed on day 1, before writing code.
 
 **One catch, decided now.** The slug is derived from the working directory. Sessions run from
@@ -565,7 +565,7 @@ nothing.
 
 ## 11. Sequence
 
-Mapped to the spec's §6 done-criteria, with the checkpoint that triggers §8 kill criteria.
+Mapped to the assignment's done-criteria, with an explicit scope checkpoint.
 
 **Day 0 — account, 15 minutes, you not me**
 Create the free Cloudflare account, then `wrangler login` (browser OAuth — no token to handle).
@@ -604,13 +604,13 @@ dividend of Decision 7.
 | Risk | Mitigation |
 |---|---|
 | **Daily neuron exhaustion mid-demo** — 10k/day hard-fails, ~58 turns | Highest-likelihood failure. Neuron counter in the CLI output; `eval:record` run deliberately not automatically; Tier 1 CI spends zero. If it trips, everything except live generation still works |
-| **No prior Workers/DO/Vectorize experience** (§9 of spec) | Day 1 is deliberately just the skeleton. Learning shows in the transcript, which is fine and honest |
+| **No prior Workers/DO/Vectorize experience** | Day 1 is deliberately just the skeleton. Learning shows in the transcript, which is fine and honest |
 | **DO→Worker streaming pass-through** — Decision 1 depends on it | Explicit day-1 verification, before anything is built on it. Fallback: buffer in the DO, stream from the Worker |
 | **Vectorize may not emulate locally** — `wrangler dev` likely needs `--remote` | Verify day 1. If remote-only, accept it; unit tests are network-free by design already |
 | **24k context window** on the fp8-fast model | Budget ~6 chunks × ~400 tokens ≈ 2.4k context + history. Enforce a token budget in `generate.ts`, truncate history before context |
 | Corpus licensing | `NOTICE.md` + per-doc `source_url`; paraphrase-and-cite anything unclear |
 | Judge latency on every turn | Already solved by the protocol — the judge event arrives after the answer has fully streamed, so it never delays the user's read |
-| Scope creep into auth / multi-tenancy / polish | §5 of the spec cuts these. They stay cut, and the README says so on purpose |
+| Scope creep into auth / multi-tenancy / polish | Explicitly out of scope. They stay cut, and the README says so on purpose |
 
 ---
 
@@ -643,7 +643,7 @@ that reads as unreviewed bulk generation.
 history is preserved when it flips, so nothing is lost by waiting, and it leaves room to correct
 an accidental credential commit before the content is permanently public and indexed.
 
-**Commit identity:** `79075063+seth-zapata@users.noreply.github.com`. Attributes to the GitHub
+**Commit identity:** the account's GitHub `users.noreply` address. Attributes to the GitHub
 account and counts toward the contribution graph without putting a personal address in a public
 repository's permanent history. Set repo-locally, not globally — the machine's global git
 identity is a separate decision.
