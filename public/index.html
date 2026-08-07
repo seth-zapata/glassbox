@@ -4,199 +4,337 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>glassbox — a RAG agent that shows its work</title>
+    <meta
+      name="description"
+      content="A retrieval-augmented agent on Cloudflare Workers that refuses to guess, and shows the evidence, the grade, and the cost behind every answer."
+    />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232a78d6'/%3E%3Crect x='8' y='9' width='16' height='3' rx='1.5' fill='white'/%3E%3Crect x='8' y='15' width='11' height='3' rx='1.5' fill='white' opacity='.75'/%3E%3Crect x='8' y='21' width='6' height='3' rx='1.5' fill='white' opacity='.5'/%3E%3C/svg%3E"
+    />
     <style>
-      /* Palette roles. Dark values are declared under both the OS media query and the
-         data-theme scope so a viewer's toggle wins in either direction. */
+      /* ── palette ──────────────────────────────────────────────────────────
+         Categorical, sequential and status values are the validated set; the
+         neutral surfaces around them are page chrome, not encoding. Dark values
+         are declared under both the OS query and the data-theme scope so a
+         viewer's toggle wins either way. */
       :root {
         color-scheme: light;
-        --surface-1: #fcfcfb;
-        --plane: #f9f9f7;
+        --surface-0: #f4f4f1;   /* page plane */
+        --surface-1: #fcfcfb;   /* cards */
+        --surface-2: #f7f7f4;   /* recessed rows */
         --ink-1: #0b0b0b;
         --ink-2: #52514e;
         --ink-muted: #898781;
-        --grid: #e1e0d9;
-        --baseline: #c3c2b7;
-        --hairline: rgba(11, 11, 11, 0.1);
-        /* categorical slots 1–4: embed, retrieve, generate, judge */
+        --grid: #e6e5df;
+        --hairline: rgba(11, 11, 11, 0.09);
+        --ring: rgba(42, 120, 214, 0.45);
         --s1: #2a78d6;
         --s2: #eb6834;
         --s3: #1baf7a;
         --s4: #eda100;
-        /* sequential hue for similarity magnitude */
         --seq: #2a78d6;
-        --seq-track: #cde2fb;
+        --seq-track: #dfeafb;
         --good: #0ca30c;
         --warning: #fab219;
         --critical: #d03b3b;
+        --shadow: 0 1px 2px rgba(11, 11, 11, 0.05), 0 4px 16px rgba(11, 11, 11, 0.04);
       }
       @media (prefers-color-scheme: dark) {
         :root:where(:not([data-theme="light"])) {
           color-scheme: dark;
+          --surface-0: #0d0d0d;
           --surface-1: #1a1a19;
-          --plane: #0d0d0d;
+          --surface-2: #202020;
           --ink-1: #ffffff;
           --ink-2: #c3c2b7;
-          --ink-muted: #898781;
+          --ink-muted: #8f8e86;
           --grid: #2c2c2a;
-          --baseline: #383835;
           --hairline: rgba(255, 255, 255, 0.1);
+          --ring: rgba(57, 135, 229, 0.55);
           --s1: #3987e5;
           --s2: #d95926;
           --s3: #199e70;
           --s4: #c98500;
           --seq: #3987e5;
-          --seq-track: #184f95;
+          --seq-track: #23334a;
+          --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.28);
         }
       }
       :root[data-theme="dark"] {
         color-scheme: dark;
+        --surface-0: #0d0d0d;
         --surface-1: #1a1a19;
-        --plane: #0d0d0d;
+        --surface-2: #202020;
         --ink-1: #ffffff;
         --ink-2: #c3c2b7;
-        --ink-muted: #898781;
+        --ink-muted: #8f8e86;
         --grid: #2c2c2a;
-        --baseline: #383835;
         --hairline: rgba(255, 255, 255, 0.1);
+        --ring: rgba(57, 135, 229, 0.55);
         --s1: #3987e5;
         --s2: #d95926;
         --s3: #199e70;
         --s4: #c98500;
         --seq: #3987e5;
-        --seq-track: #184f95;
+        --seq-track: #23334a;
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.28);
       }
 
-      * { box-sizing: border-box; }
+      *, *::before, *::after { box-sizing: border-box; }
+      /* An explicit display value beats the UA stylesheet's [hidden] rule, so elements
+         styled as grid/flex stay visible when hidden is set. Restore the intent. */
+      [hidden] { display: none !important; }
+      html { -webkit-text-size-adjust: 100%; }
       body {
         margin: 0;
-        padding: 2.5rem 1rem 8rem;
-        background: var(--plane);
+        background: var(--surface-0);
         color: var(--ink-1);
-        font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+        font: 400 15px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+        font-synthesis-weight: none;
       }
-      .wrap { max-width: 52rem; margin: 0 auto; }
-      header { margin-bottom: 2rem; }
-      h1 { font-size: 1.25rem; margin: 0 0 0.3rem; letter-spacing: -0.01em; }
-      .tagline { color: var(--ink-2); margin: 0; font-size: 0.92rem; }
-      .tagline code { font-size: 0.85em; color: var(--ink-muted); }
+      .mono { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-variant-numeric: tabular-nums; }
+      :focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      }
 
-      .turn { margin-bottom: 1.6rem; }
-      .who {
-        font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em;
-        color: var(--ink-muted); margin-bottom: 0.35rem;
+      /* ── app shell ─────────────────────────────────────────────────────── */
+      .topbar {
+        position: sticky; top: 0; z-index: 10;
+        background: color-mix(in srgb, var(--surface-0) 88%, transparent);
+        backdrop-filter: saturate(180%) blur(12px);
+        border-bottom: 1px solid var(--hairline);
       }
-      .bubble {
+      .topbar-inner {
+        max-width: 50rem; margin: 0 auto; padding: 0.7rem 1.25rem;
+        display: flex; align-items: center; gap: 0.75rem;
+      }
+      .mark { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
+      .mark strong { font-size: 0.98rem; font-weight: 650; letter-spacing: -0.015em; }
+      .mark .sub {
+        font-size: 0.72rem; color: var(--ink-muted); white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      .spacer { flex: 1; }
+      .status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem; color: var(--ink-2); }
+      .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); flex: none; }
+      .dot.up { background: var(--good); }
+      .dot.down { background: var(--critical); }
+      .ghost-link {
+        font-size: 0.75rem; color: var(--ink-2); text-decoration: none;
+        border: 1px solid var(--hairline); border-radius: 0.4rem; padding: 0.25rem 0.55rem;
+        background: var(--surface-1); white-space: nowrap;
+      }
+      .ghost-link:hover { color: var(--ink-1); }
+
+      main { max-width: 50rem; margin: 0 auto; padding: 1.75rem 1.25rem 9rem; }
+
+      .lede { margin: 0 0 1.5rem; color: var(--ink-2); font-size: 0.95rem; max-width: 42rem; }
+      .lede strong { color: var(--ink-1); font-weight: 600; }
+
+      /* ── empty state ───────────────────────────────────────────────────── */
+      .starters { display: grid; gap: 0.6rem; margin-bottom: 2rem; }
+      .starter {
+        display: grid; grid-template-columns: auto 1fr; gap: 0.15rem 0.7rem;
+        text-align: left; width: 100%; cursor: pointer;
         background: var(--surface-1); border: 1px solid var(--hairline);
-        border-radius: 0.6rem; padding: 0.85rem 1rem;
+        border-radius: 0.65rem; padding: 0.7rem 0.85rem; color: inherit; font: inherit;
+        transition: border-color 0.15s ease, transform 0.15s ease;
       }
-      .answer { white-space: pre-wrap; }
+      .starter:hover { border-color: var(--ring); transform: translateY(-1px); }
+      .starter .kind {
+        grid-row: 1 / 3; align-self: center;
+        font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 650;
+        padding: 0.2rem 0.4rem; border-radius: 0.3rem; border: 1px solid currentColor; white-space: nowrap;
+      }
+      .kind.grounded { color: var(--good); }
+      .kind.refuse { color: var(--warning); }
+      .kind.ambig { color: var(--ink-muted); }
+      .starter .q { font-size: 0.9rem; }
+      .starter .why { font-size: 0.76rem; color: var(--ink-muted); }
 
-      /* ── evaluation panel ─────────────────────────────────────────────── */
-      .panel { margin-top: 0.6rem; border: 1px solid var(--hairline); border-radius: 0.6rem; background: var(--surface-1); overflow: hidden; }
-      .panel-head {
-        display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
-        padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--grid);
+      /* ── turns ─────────────────────────────────────────────────────────── */
+      .turn { margin-bottom: 1.5rem; }
+      .who {
+        font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.08em;
+        color: var(--ink-muted); margin-bottom: 0.4rem; font-weight: 650;
       }
-      .panel-title { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-muted); }
-      .section { padding: 0.8rem 0.9rem; }
-      .section + .section { border-top: 1px solid var(--grid); }
-      .section h3 {
-        font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.06em;
-        color: var(--ink-muted); margin: 0 0 0.55rem; font-weight: 600;
+      .card {
+        background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 0.75rem; box-shadow: var(--shadow);
       }
+      .card.question { background: var(--surface-2); box-shadow: none; }
+      .card-body { padding: 0.95rem 1.1rem; }
+      .answer { white-space: pre-wrap; font-size: 1rem; line-height: 1.65; }
+      .answer.refused { color: var(--ink-2); }
+      .caret {
+        display: inline-block; width: 0.5em; height: 1.05em; vertical-align: -0.18em;
+        background: var(--ink-muted); margin-left: 1px; animation: blink 1.1s steps(2, start) infinite;
+      }
+      @keyframes blink { to { visibility: hidden; } }
 
-      /* status badges — icon + label, never colour alone */
+      /* ── evaluation panel ──────────────────────────────────────────────── */
+      .panel { border-top: 1px solid var(--grid); }
+      .strip {
+        display: flex; align-items: center; gap: 0.5rem 1.25rem; flex-wrap: wrap;
+        padding: 0.65rem 1.1rem;
+      }
+      .strip-label {
+        font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.09em;
+        color: var(--ink-muted); font-weight: 650;
+      }
+      .stat { display: inline-flex; align-items: baseline; gap: 0.3rem; font-size: 0.78rem; color: var(--ink-muted); }
+      .stat b { font-weight: 600; color: var(--ink-1); font-size: 0.85rem; }
+
       .badge {
-        display: inline-flex; align-items: center; gap: 0.35rem;
-        font-size: 0.78rem; font-weight: 600; padding: 0.15rem 0.5rem;
-        border-radius: 0.35rem; border: 1px solid currentColor;
+        display: inline-flex; align-items: center; gap: 0.32rem;
+        font-size: 0.74rem; font-weight: 650; padding: 0.16rem 0.5rem;
+        border-radius: 0.35rem; border: 1px solid currentColor; white-space: nowrap;
       }
-      .badge .glyph { font-size: 0.9em; }
       .badge.good { color: var(--good); }
       .badge.critical { color: var(--critical); }
       .badge.warning { color: var(--warning); }
       .badge.muted { color: var(--ink-muted); }
 
-      /* retrieval meters — one measure, one hue, ranked */
-      .chunk { display: grid; grid-template-columns: 1fr auto; gap: 0.15rem 0.7rem; margin-bottom: 0.5rem; }
-      .chunk-label { font-size: 0.8rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .rationale { font-size: 0.82rem; color: var(--ink-2); }
-      .chunk-score { font-size: 0.8rem; color: var(--ink-1); font-variant-numeric: tabular-nums; }
-      .track {
-        grid-column: 1 / -1; position: relative; height: 8px;
-        background: var(--seq-track); border-radius: 4px; opacity: 0.55;
+      .section { padding: 0.85rem 1.1rem; border-top: 1px solid var(--grid); }
+      .section h3 {
+        font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.08em;
+        color: var(--ink-muted); margin: 0 0 0.7rem; font-weight: 650;
       }
-      .fill {
-        position: absolute; inset: 0 auto 0 0; height: 8px;
-        background: var(--seq); border-radius: 4px; opacity: 1;
-      }
-      .tau-marker {
-        position: absolute; top: -3px; bottom: -3px; width: 2px;
-        background: var(--baseline);
-      }
-      .tau-note { font-size: 0.72rem; color: var(--ink-muted); margin-top: 0.4rem; }
 
-      /* latency composition — stacked, 2px surface gaps, direct labels */
-      .stack { display: flex; height: 10px; gap: 2px; margin-bottom: 0.5rem; }
-      .seg { height: 10px; border-radius: 2px; min-width: 2px; }
+      /* retrieval meters — one measure, one hue, ranked, no legend */
+      .chunk { margin-bottom: 0.62rem; }
+      .chunk-top { display: flex; justify-content: space-between; align-items: baseline; gap: 0.75rem; margin-bottom: 0.28rem; }
+      .chunk-name { font-size: 0.82rem; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .chunk-name .part { color: var(--ink-muted); }
+      .chunk-score { font-size: 0.8rem; color: var(--ink-1); font-weight: 600; flex: none; }
+      .track { position: relative; height: 7px; background: var(--seq-track); border-radius: 4px; }
+      .fill { position: absolute; inset: 0 auto 0 0; height: 7px; background: var(--seq); border-radius: 4px; }
+      .tau { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--ink-muted); opacity: 0.75; }
+      .tau::after {
+        content: "τ"; position: absolute; top: -1.05rem; left: 50%; transform: translateX(-50%);
+        font-size: 0.62rem; color: var(--ink-muted);
+      }
+      .scale-note { font-size: 0.72rem; color: var(--ink-muted); margin-top: 0.55rem; }
+      .rationale { font-size: 0.86rem; color: var(--ink-2); }
+
+      /* latency composition — direct labels carry identity, not colour alone */
+      .stack { display: flex; height: 9px; gap: 2px; margin-bottom: 0.6rem; }
+      .seg { height: 9px; border-radius: 2px; min-width: 3px; }
       .seg:first-child { border-radius: 4px 2px 2px 4px; }
       .seg:last-child { border-radius: 2px 4px 4px 2px; }
-      .legend { display: flex; flex-wrap: wrap; gap: 0.15rem 1rem; }
-      .legend-item { display: flex; align-items: center; gap: 0.35rem; font-size: 0.76rem; color: var(--ink-2); }
-      .swatch { width: 9px; height: 9px; border-radius: 2px; flex: none; }
-      .legend-val { color: var(--ink-1); font-variant-numeric: tabular-nums; }
+      .legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1.1rem; }
+      .legend-item { display: inline-flex; align-items: center; gap: 0.38rem; font-size: 0.76rem; color: var(--ink-2); }
+      .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+      .legend-item b { font-weight: 600; color: var(--ink-1); }
 
-      /* stat tiles — headline numbers, not charts */
-      .tiles { display: flex; flex-wrap: wrap; gap: 1.4rem; }
-      .tile-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); }
-      .tile-value { font-size: 1.15rem; font-weight: 600; }
-      .tile-value .unit { font-size: 0.7rem; font-weight: 400; color: var(--ink-muted); margin-left: 0.15rem; }
-
-      table.data { border-collapse: collapse; width: 100%; font-size: 0.78rem; margin-top: 0.5rem; }
-      table.data th, table.data td { text-align: left; padding: 0.25rem 0.5rem 0.25rem 0; border-bottom: 1px solid var(--grid); }
-      table.data th { color: var(--ink-muted); font-weight: 600; }
-      table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
-      details.table-view summary { font-size: 0.74rem; color: var(--ink-muted); cursor: pointer; margin-top: 0.5rem; }
-
-      form { position: fixed; left: 0; right: 0; bottom: 0; background: var(--plane); border-top: 1px solid var(--hairline); padding: 0.8rem 1rem; }
-      .form-inner { max-width: 52rem; margin: 0 auto; display: flex; gap: 0.5rem; }
-      input {
-        flex: 1; padding: 0.6rem 0.75rem; font: inherit; color: inherit;
-        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 0.5rem;
+      details.more { border-top: 1px solid var(--grid); }
+      details.more > summary {
+        list-style: none; cursor: pointer; padding: 0.6rem 1.1rem;
+        font-size: 0.72rem; color: var(--ink-muted);
       }
-      button {
-        padding: 0.6rem 1.1rem; font: inherit; font-weight: 600; color: inherit; cursor: pointer;
-        background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 0.5rem;
+      details.more > summary::-webkit-details-marker { display: none; }
+      details.more > summary::before { content: "▸ "; }
+      details.more[open] > summary::before { content: "▾ "; }
+      .more-body { padding: 0 1.1rem 0.9rem; }
+      table.data { border-collapse: collapse; width: 100%; font-size: 0.78rem; }
+      table.data th, table.data td { text-align: left; padding: 0.3rem 0.6rem 0.3rem 0; border-bottom: 1px solid var(--grid); }
+      table.data th { color: var(--ink-muted); font-weight: 650; }
+      table.data td.num, table.data th.num { text-align: right; }
+      .models { font-size: 0.72rem; color: var(--ink-muted); margin-top: 0.6rem; word-break: break-word; }
+
+      /* skeleton — retrieval runs before anything can be shown */
+      .skeleton { height: 7px; border-radius: 4px; background: var(--grid); overflow: hidden; position: relative; }
+      .skeleton::after {
+        content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+        background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--ink-muted) 22%, transparent), transparent);
+        animation: sweep 1.3s infinite;
       }
-      button:disabled { opacity: 0.5; cursor: default; }
-      .suggestions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.2rem; }
-      .suggestions button { font-size: 0.78rem; font-weight: 400; padding: 0.3rem 0.6rem; color: var(--ink-2); }
+      @keyframes sweep { to { transform: translateX(100%); } }
+      .skeleton-row { margin-bottom: 0.62rem; }
+      .skeleton-name { height: 0.62rem; width: 42%; border-radius: 3px; background: var(--grid); margin-bottom: 0.35rem; }
+
+      /* ── composer ──────────────────────────────────────────────────────── */
+      .composer {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+        background: color-mix(in srgb, var(--surface-0) 90%, transparent);
+        backdrop-filter: saturate(180%) blur(12px);
+        border-top: 1px solid var(--hairline); padding: 0.85rem 1.25rem 1.1rem;
+      }
+      .composer-inner { max-width: 50rem; margin: 0 auto; display: flex; gap: 0.55rem; }
+      input[type="text"] {
+        flex: 1; min-width: 0; padding: 0.68rem 0.85rem; font: inherit; color: inherit;
+        background: var(--surface-1); border: 1px solid var(--hairline);
+        border-radius: 0.6rem; box-shadow: var(--shadow);
+      }
+      input[type="text"]::placeholder { color: var(--ink-muted); }
+      button.primary {
+        padding: 0.68rem 1.25rem; font: inherit; font-weight: 650; cursor: pointer;
+        color: var(--surface-1); background: var(--s1); border: 1px solid transparent;
+        border-radius: 0.6rem; white-space: nowrap;
+      }
+      button.primary:disabled { opacity: 0.55; cursor: default; }
+      .hint { max-width: 50rem; margin: 0.5rem auto 0; font-size: 0.7rem; color: var(--ink-muted); }
+
+      @media (max-width: 34rem) {
+        .mark .sub { display: none; }
+        .starter { grid-template-columns: 1fr; }
+        .starter .kind { grid-row: auto; justify-self: start; }
+      }
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <header>
-        <h1>glassbox</h1>
-        <p class="tagline">
-          A RAG agent over Cloudflare Registrar documentation. It refuses to guess — and shows the
-          evidence, the grade, and the cost either way.
-        </p>
-      </header>
+    <div class="topbar">
+      <div class="topbar-inner">
+        <div class="mark">
+          <strong>glassbox</strong>
+          <span class="sub mono">RAG · Cloudflare Workers</span>
+        </div>
+        <div class="spacer"></div>
+        <span class="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
+        <a class="ghost-link" href="https://github.com/seth-zapata/glassbox" rel="noopener">Source</a>
+      </div>
+    </div>
 
-      <div class="suggestions" id="suggestions">
-        <button data-q="How long is the transfer lock after changing my registrant contact information?">transfer lock ↴</button>
-        <button data-q="What is an authorization code and where do I obtain one?">auth codes ↴</button>
-        <button data-q="How do I configure Workers KV namespaces in my application?">out of corpus ↴</button>
+    <main>
+      <p class="lede">
+        Answers questions about domain registration from a fixed corpus of
+        <strong>18 Cloudflare Registrar documents</strong>. It refuses when the corpus cannot
+        support an answer — and shows the evidence, the grade, and the cost either way.
+      </p>
+
+      <div class="starters" id="starters">
+        <button class="starter" data-q="How long is the transfer lock after changing my registrant contact information?">
+          <span class="kind grounded">grounded</span>
+          <span class="q">How long is the transfer lock after changing my registrant contact information?</span>
+          <span class="why">In corpus — expect a cited answer and a faithfulness verdict.</span>
+        </button>
+        <button class="starter" data-q="How do I configure Workers KV namespaces in my application?">
+          <span class="kind refuse">refusal</span>
+          <span class="q">How do I configure Workers KV namespaces in my application?</span>
+          <span class="why">A Cloudflare product, but not registrar — expect a refusal costing 0.09 neurons.</span>
+        </button>
+        <button class="starter" data-q="How long is the lock?">
+          <span class="kind ambig">ambiguous</span>
+          <span class="q">How long is the lock?</span>
+          <span class="why">Several different locks exist — expect a request for clarification.</span>
+        </button>
       </div>
 
       <div id="log"></div>
-    </div>
+    </main>
 
-    <form id="form">
-      <div class="form-inner">
-        <input id="input" placeholder="Ask about domain registration…" autocomplete="off" autofocus />
-        <button id="send">Ask</button>
+    <form class="composer" id="form">
+      <div class="composer-inner">
+        <input id="input" type="text" placeholder="Ask about domain registration…" autocomplete="off"
+               aria-label="Ask a question about domain registration" />
+        <button class="primary" id="send" type="submit">Ask</button>
       </div>
+      <p class="hint">
+        Every answer streams its retrieved evidence before the first token. Conversation state
+        persists per browser in a Durable Object.
+      </p>
     </form>
 
     <script type="module">
@@ -204,7 +342,11 @@
       const form = document.getElementById("form");
       const input = document.getElementById("input");
       const send = document.getElementById("send");
+      const starters = document.getElementById("starters");
+      const dot = document.getElementById("dot");
+      const statusText = document.getElementById("statusText");
 
+      const TAU = 0.62;
       const STAGES = [
         { key: "embedMs", label: "embed", varName: "--s1" },
         { key: "retrieveMs", label: "retrieve", varName: "--s2" },
@@ -224,60 +366,76 @@
         if (text !== undefined) n.textContent = text;
         return n;
       };
-
-      function turn(role) {
-        const t = el("div", "turn");
-        t.append(el("div", "who", role));
-        const b = el("div", "bubble");
-        t.append(b);
-        log.append(t);
-        window.scrollTo(0, document.body.scrollHeight);
-        return { turn: t, bubble: b };
-      }
+      const scrollDown = () => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
 
       function badge(kind, glyph, label) {
         const b = el("span", `badge ${kind}`);
-        b.append(el("span", "glyph", glyph), el("span", null, label));
+        b.append(el("span", null, glyph), el("span", null, label));
         return b;
       }
 
-      /** Retrieval evidence: one measure across ranked items, so one hue and no legend. */
-      function renderEvidence(section, chunks, tau) {
-        section.append(el("h3", null, `Retrieved evidence — top ${chunks.length} of 70 chunks`));
-        if (chunks.length === 0) {
-          section.append(el("div", "tau-note", "No chunks returned."));
+      function card(role, cls) {
+        const t = el("div", "turn");
+        t.append(el("div", "who", role));
+        const c = el("div", `card ${cls || ""}`);
+        t.append(c);
+        log.append(t);
+        return c;
+      }
+
+      function questionCard(text) {
+        const c = card("you", "question");
+        const body = el("div", "card-body");
+        body.textContent = text;
+        c.append(body);
+      }
+
+      function renderEvidence(host, chunks) {
+        host.replaceChildren();
+        host.append(el("h3", null, `Retrieved evidence — top ${chunks.length} of 70 chunks`));
+        if (!chunks.length) {
+          host.append(el("div", "scale-note", "No chunks returned."));
           return;
         }
         for (const c of chunks) {
           const row = el("div", "chunk");
-          const part = (c.chunkId.split("#")[1] ?? "");
-          row.append(el("div", "chunk-label", `${c.docTitle || c.chunkId}${part !== "" ? ` · chunk ${part}` : ""}`));
-          row.append(el("div", "chunk-score", c.score.toFixed(3)));
+          const top = el("div", "chunk-top");
+          const name = el("div", "chunk-name");
+          name.append(document.createTextNode(c.docTitle || c.chunkId));
+          const part = c.chunkId.split("#")[1];
+          if (part !== undefined) name.append(el("span", "part", ` · chunk ${part}`));
+          top.append(name, el("div", "chunk-score mono", c.score.toFixed(3)));
+          row.append(top);
+
           const track = el("div", "track");
           const fill = el("div", "fill");
           fill.style.width = `${Math.max(0, Math.min(1, c.score)) * 100}%`;
-          track.append(fill);
-          if (tau > 0) {
-            const marker = el("div", "tau-marker");
-            marker.style.left = `${tau * 100}%`;
-            marker.title = `similarity gate τ = ${tau}`;
-            track.append(marker);
-          }
+          const tau = el("div", "tau");
+          tau.style.left = `${TAU * 100}%`;
+          track.append(fill, tau);
           row.append(track);
-          section.append(row);
+          host.append(row);
         }
-        section.append(
-          el("div", "tau-note", `Scale 0–1 cosine similarity. Vertical rule marks the similarity gate τ = ${tau}.`),
+        host.append(
+          el("div", "scale-note", `0–1 cosine similarity. The marked rule is the similarity gate, τ = ${TAU}.`),
         );
       }
 
-      /** Latency composition. Every segment is directly labelled — two of these hues sit below
-          3:1 on the light surface, so labels carry the identity, not colour. */
-      function renderLatency(section, timings) {
-        section.append(el("h3", null, "Where the time went"));
-        const total = STAGES.reduce((s, st) => s + (timings[st.key] || 0), 0) || 1;
+      function skeletonEvidence(host) {
+        host.replaceChildren();
+        host.append(el("h3", null, "Retrieving evidence…"));
+        for (let i = 0; i < 3; i++) {
+          const row = el("div", "skeleton-row");
+          row.append(el("div", "skeleton-name"), el("div", "skeleton"));
+          host.append(row);
+        }
+      }
 
+      function renderTiming(host, timings) {
+        host.replaceChildren();
+        host.append(el("h3", null, "Where the time went"));
         const stack = el("div", "stack");
+        const legend = el("div", "legend");
         for (const st of STAGES) {
           const ms = timings[st.key] || 0;
           if (ms <= 0) continue;
@@ -286,79 +444,83 @@
           seg.style.background = `var(${st.varName})`;
           seg.title = `${st.label}: ${ms} ms`;
           stack.append(seg);
-        }
-        section.append(stack);
 
-        const legend = el("div", "legend");
-        for (const st of STAGES) {
-          const ms = timings[st.key] || 0;
-          if (ms <= 0) continue;
           const item = el("div", "legend-item");
           const sw = el("span", "swatch");
           sw.style.background = `var(${st.varName})`;
-          const val = el("span", "legend-val", `${ms} ms`);
-          item.append(sw, el("span", null, st.label), val);
+          const b = el("b", "mono", `${ms} ms`);
+          item.append(sw, el("span", null, st.label), b);
           legend.append(item);
         }
-        section.append(legend);
-
-        // Table view — the relief for the sub-3:1 contrast warning, and useful regardless.
-        const det = el("details", "table-view");
-        det.append(el("summary", null, "table view"));
-        const table = el("table", "data");
-        const thead = el("tr");
-        thead.append(el("th", null, "stage"), el("th", null, "ms"), el("th", null, "share"));
-        table.append(thead);
-        for (const st of STAGES) {
-          const ms = timings[st.key] || 0;
-          const tr = el("tr");
-          const share = el("td", "num", `${((ms / total) * 100).toFixed(1)}%`);
-          tr.append(el("td", null, st.label), el("td", "num", String(ms)), share);
-          table.append(tr);
-        }
-        det.append(table);
-        section.append(det);
+        host.append(stack, legend);
       }
 
-      function renderCost(section, result) {
-        section.append(el("h3", null, "Cost and models"));
-        const tiles = el("div", "tiles");
-        const tile = (label, value, unit) => {
-          const d = el("div");
-          d.append(el("div", "tile-label", label));
-          const v = el("div", "tile-value", value);
-          if (unit) v.append(el("span", "unit", unit));
-          d.append(v);
-          return d;
-        };
-        tiles.append(
-          tile("neurons", String(result.neurons), "of 10,000/day"),
-          tile("total", String(result.timings.totalMs), "ms"),
+      function renderMore(panel, result) {
+        const det = el("details", "more");
+        det.append(el("summary", null, "stage breakdown and models"));
+        const body = el("div", "more-body");
+        const total = STAGES.reduce((s, st) => s + (result.timings[st.key] || 0), 0) || 1;
+        const table = el("table", "data");
+        const head = el("tr");
+        head.append(el("th", null, "stage"), el("th", "num", "ms"), el("th", "num", "share"));
+        table.append(head);
+        for (const st of STAGES) {
+          const ms = result.timings[st.key] || 0;
+          const tr = el("tr");
+          tr.append(
+            el("td", null, st.label),
+            el("td", "num mono", String(ms)),
+            el("td", "num mono", `${((ms / total) * 100).toFixed(1)}%`),
+          );
+          table.append(tr);
+        }
+        body.append(table);
+        const m = result.models || {};
+        body.append(
+          el("div", "models",
+            `generator ${m.generator || "—"} · judge ${m.judge || "—"} · embedder ${m.embedder || "—"}`),
         );
-        section.append(tiles);
-        const models = el("div", "tau-note");
-        models.textContent =
-          `generator ${result.models.generator} · judge ${result.models.judge || "—"} · embedder ${result.models.embedder || "—"}`;
-        section.append(models);
+        det.append(body);
+        panel.append(det);
       }
 
       async function ask(question) {
-        turn("you").bubble.textContent = question;
+        starters.hidden = true;
+        questionCard(question);
 
-        const { bubble } = turn("glassbox");
+        const c = card("glassbox");
+        const body = el("div", "card-body");
         const answerEl = el("div", "answer");
-        bubble.append(answerEl);
+        answerEl.setAttribute("aria-live", "polite");
+        const caret = el("span", "caret");
+        answerEl.append(caret);
+        body.append(answerEl);
+        c.append(body);
 
         const panel = el("div", "panel");
-        const head = el("div", "panel-head");
-        head.append(el("span", "panel-title", "evaluation"));
-        const status = el("span");
-        head.append(status);
-        panel.append(head);
-        bubble.append(panel);
+        const strip = el("div", "strip");
+        strip.append(el("span", "strip-label", "evaluation"));
+        const verdictSlot = el("span");
+        strip.append(verdictSlot);
+        const statsSlot = el("span", "strip");
+        statsSlot.style.padding = "0";
+        strip.append(statsSlot);
+        panel.append(strip);
 
         const evidence = el("div", "section");
+        skeletonEvidence(evidence);
         panel.append(evidence);
+
+        const verdictSection = el("div", "section");
+        verdictSection.hidden = true;
+        panel.append(verdictSection);
+
+        const timing = el("div", "section");
+        timing.hidden = true;
+        panel.append(timing);
+
+        c.append(panel);
+        scrollDown();
 
         let res;
         try {
@@ -368,13 +530,21 @@
             body: JSON.stringify({ message: question }),
           });
         } catch {
-          answerEl.textContent = "network error";
+          caret.remove();
+          answerEl.textContent = "Network error — the Worker could not be reached.";
+          verdictSlot.replaceChildren(badge("critical", "✕", "error"));
           return;
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buf = "";
+        let text = "";
+
+        const setText = (s) => {
+          text = s;
+          answerEl.replaceChildren(document.createTextNode(text), caret);
+        };
 
         for (;;) {
           const { done, value } = await reader.read();
@@ -388,64 +558,126 @@
             try { evt = JSON.parse(line.slice(5)); } catch { continue; }
 
             if (evt.type === "retrieval") {
-              // Evidence lands before any answer text — the panel fills in first, on purpose.
-              renderEvidence(evidence, evt.chunks, 0.62);
+              renderEvidence(evidence, evt.chunks);
             } else if (evt.type === "token") {
-              answerEl.textContent += evt.delta;
-              window.scrollTo(0, document.body.scrollHeight);
+              setText(text + evt.delta);
+              scrollDown();
             } else if (evt.type === "refusal") {
-              const why = evt.reason === "low_similarity"
-                ? `nothing retrieved above the similarity gate (best ${evt.maxScore.toFixed(3)} < τ ${evt.tau})`
-                : "the retrieved passages do not answer this question";
-              answerEl.textContent = `Refused — ${why}.`;
-              status.replaceChildren(badge("warning", "⊘", "refused"));
+              answerEl.classList.add("refused");
+              setText(
+                evt.reason === "low_similarity"
+                  ? `Refused. Nothing in the corpus scored above the similarity gate — best match ${evt.maxScore.toFixed(3)}, gate ${evt.tau}.`
+                  : "Refused. The retrieved passages do not answer this question.",
+              );
+              verdictSlot.replaceChildren(badge("warning", "⊘", "refused"));
             } else if (evt.type === "judge") {
               const v = evt.verdict;
-              status.replaceChildren(
+              verdictSlot.replaceChildren(
                 badge(v.supported ? "good" : "critical", v.supported ? "✓" : "✕",
-                  `${v.supported ? "grounded" : "unsupported"} · ${v.score.toFixed(2)}`),
+                      `${v.supported ? "grounded" : "unsupported"} · ${v.score.toFixed(2)}`),
               );
-              const s = el("div", "section");
-              s.append(el("h3", null, "Faithfulness verdict"));
-              s.append(el("div", "rationale", v.rationale || "—"));
-              panel.append(s);
+              verdictSection.hidden = false;
+              verdictSection.replaceChildren(
+                el("h3", null, "Faithfulness verdict"),
+                el("div", "rationale", v.rationale || "—"),
+              );
             } else if (evt.type === "done") {
-              const s1 = el("div", "section");
-              renderLatency(s1, evt.result.timings);
-              panel.append(s1);
-              const s2 = el("div", "section");
-              renderCost(s2, evt.result);
-              panel.append(s2);
-              if (!status.hasChildNodes()) {
-                status.replaceChildren(badge("muted", "·", "no verdict"));
+              caret.remove();
+              const r = evt.result;
+              timing.hidden = false;
+              renderTiming(timing, r.timings);
+              renderMore(panel, r);
+
+              const stats = el("span", "legend");
+              const stat = (label, val) => {
+                const s = el("span", "stat");
+                s.append(el("b", "mono", val), el("span", null, label));
+                return s;
+              };
+              stats.append(
+                stat("ms", String(r.timings.totalMs)),
+                stat("neurons", String(r.neurons)),
+              );
+              statsSlot.replaceChildren(stats);
+              if (!verdictSlot.hasChildNodes()) {
+                verdictSlot.replaceChildren(badge("muted", "·", "no verdict"));
               }
             } else if (evt.type === "error") {
-              answerEl.textContent = `error: ${evt.message}`;
-              status.replaceChildren(badge("critical", "✕", "error"));
+              caret.remove();
+              setText(`Error: ${evt.message}`);
+              verdictSlot.replaceChildren(badge("critical", "✕", "error"));
             }
           }
         }
-        window.scrollTo(0, document.body.scrollHeight);
+        caret.remove();
+        scrollDown();
       }
 
-      form.addEventListener("submit", async (e) => {
+      async function run(question) {
+        send.disabled = true;
+        input.disabled = true;
+        try {
+          await ask(question);
+        } finally {
+          send.disabled = false;
+          input.disabled = false;
+          input.focus();
+        }
+      }
+
+      form.addEventListener("submit", (e) => {
         e.preventDefault();
         const q = input.value.trim();
         if (!q) return;
         input.value = "";
-        send.disabled = true;
-        await ask(q);
-        send.disabled = false;
-        input.focus();
+        void run(q);
       });
 
-      document.getElementById("suggestions").addEventListener("click", async (e) => {
-        const q = e.target.dataset?.q;
-        if (!q) return;
-        send.disabled = true;
-        await ask(q);
-        send.disabled = false;
+      starters.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-q]");
+        if (btn) void run(btn.dataset.q);
       });
+
+      /** Restore the conversation the Durable Object is already holding. */
+      async function restore() {
+        try {
+          const res = await fetch(`/api/history?session=${session}`);
+          const { messages } = await res.json();
+          if (!messages?.length) return;
+          starters.hidden = true;
+          for (const m of messages) {
+            if (m.role === "user") {
+              questionCard(m.content);
+            } else {
+              const c = card("glassbox");
+              const body = el("div", "card-body");
+              body.append(el("div", "answer", m.content));
+              c.append(body);
+              const note = el("div", "section");
+              note.append(el("div", "scale-note",
+                "Restored from Durable Object storage — the evaluation trace is not replayed for past turns."));
+              c.append(note);
+            }
+          }
+        } catch {
+          /* A failed restore must not block a working composer. */
+        }
+      }
+
+      async function health() {
+        try {
+          const res = await fetch("/api/health");
+          const ok = res.ok && (await res.json()).ok;
+          dot.className = `dot ${ok ? "up" : "down"}`;
+          statusText.textContent = ok ? "live" : "degraded";
+        } catch {
+          dot.className = "dot down";
+          statusText.textContent = "unreachable";
+        }
+      }
+
+      void health();
+      void restore();
     </script>
   </body>
 </html>
