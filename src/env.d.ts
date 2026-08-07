@@ -1,0 +1,11 @@
+// Secrets are set with `wrangler secret put` and are not declared in wrangler.jsonc, so
+// `wrangler types` cannot generate them. Declared here by interface merging rather than via a
+// local .dev.vars file, so the type is identical in CI, where no such file exists.
+//
+// No imports or exports in this file — that keeps it a global script, which is what makes the
+// merge with the generated `interface Env` work.
+
+interface Env {
+  /** Shared secret guarding /api/admin/ingest. Set: npx wrangler secret put INGEST_TOKEN */
+  INGEST_TOKEN?: string;
+}

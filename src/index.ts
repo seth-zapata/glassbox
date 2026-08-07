@@ -1,18 +1,38 @@
 /**
  * Worker entry point.
  *
- * Routes /api/* to the session's Durable Object and lets everything else fall through to the
- * static asset store. The Durable Object's streaming Response is returned unmodified — reading
- * or rewrapping the body here would buffer it and defeat the progressive reveal.
+ * Routes /api/* to the session's Durable Object and lets everything else fall through to static
+ * assets. The Durable Object's streaming Response is returned unmodified — reading or rewrapping
+ * the body here would buffer it and defeat the progressive reveal.
  */
+
+import { ingest } from "./agent/ingest.ts";
+import type { CorpusDoc } from "./agent/chunk.ts";
 
 export { ChatAgent } from "./agent/ChatAgent.ts";
 
-/** Session ids come from the client and only namespace a Durable Object, but bound the length. */
 function sessionIdFrom(url: URL): string {
-  const raw = url.searchParams.get("session")?.trim();
-  if (!raw) return "default";
-  return raw.slice(0, 64);
+  return url.searchParams.get("session")?.trim().slice(0, 64) || "default";
+}
+
+/**
+ * Ingest is guarded by a shared secret, not because the corpus is sensitive, but because it
+ * spends against a hard-capped daily Workers AI allocation. An unauthenticated endpoint that
+ * burns the budget would take the live demo down with it.
+ *
+ * Set with: npx wrangler secret put INGEST_TOKEN
+ */
+function ingestAuthorized(request: Request, env: Env): boolean {
+  const expected = env.INGEST_TOKEN;
+  if (!expected) return false;
+  const provided = request.headers.get("x-ingest-token") ?? "";
+  if (provided.length !== expected.length) return false;
+  // Constant-time compare; cheap, and avoids a timing oracle on a shared secret.
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) {
+    diff |= expected.charCodeAt(i) ^ provided.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 export default {
@@ -25,6 +45,18 @@ export default {
 
     if (url.pathname === "/api/health") {
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/api/admin/ingest" && request.method === "POST") {
+      if (!ingestAuthorized(request, env)) {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      const { docs } = (await request.json()) as { docs?: CorpusDoc[] };
+      if (!Array.isArray(docs) || docs.length === 0) {
+        return Response.json({ error: "docs[] is required" }, { status: 400 });
+      }
+      const report = await ingest(env.AI, env.VECTORIZE, docs);
+      return Response.json(report);
     }
 
     const id = env.CHAT_AGENT.idFromName(sessionIdFrom(url));

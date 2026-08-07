@@ -12,7 +12,12 @@
     "transcript": "node --experimental-strip-types scripts/export-transcript.ts",
     "transcript:check": "node --experimental-strip-types scripts/check-transcript-leaks.ts",
     "typecheck": "wrangler types >/dev/null && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.scripts.json",
-    "transcript:check:ci": "node --experimental-strip-types scripts/check-transcript-leaks.ts --credentials-only"
+    "transcript:check:ci": "node --experimental-strip-types scripts/check-transcript-leaks.ts --credentials-only",
+    "corpus:fetch": "node --experimental-strip-types scripts/fetch-corpus.ts",
+    "ingest": "node --experimental-strip-types scripts/ingest.ts",
+    "deploy": "wrangler deploy",
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "corpus:check": "node --experimental-strip-types scripts/check-corpus.ts"
   },
   "author": "Seth Zapata",
   "license": "MIT",

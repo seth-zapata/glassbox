@@ -4,5 +4,7 @@
     "types": ["node"],
     "lib": ["ES2023"]
   },
-  "include": ["scripts/**/*.ts", "test/**/*.ts"]
+  // Scripts and tests import Worker modules, so the generated Workers runtime types are needed
+  // here too — otherwise `Ai` and `VectorizeIndex` are unresolved in anything under test.
+  "include": ["scripts/**/*.ts", "test/**/*.ts", "src/**/*.ts", "worker-configuration.d.ts"]
 }
