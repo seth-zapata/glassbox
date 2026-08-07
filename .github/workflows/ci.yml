@@ -39,6 +39,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Unit tests
+        # Pure logic only — chunk boundaries, refusal gates, judge parsing, scoring arithmetic.
+        # No network and no bindings, so this runs identically on forks.
+        run: npm test
+
+      - name: Corpus integrity
+        # The corpus is committed, so its provenance is checkable without fetching anything.
+        run: npm run corpus:check
+
       - name: Transcript credential scan
         # The private phrase list is gitignored and therefore absent here, so this runs the
         # credential patterns only. The script fails loudly if the config is missing without

@@ -1,38 +1,45 @@
 import { DurableObject } from "cloudflare:workers";
-import type { StoredMessage, TurnEvent } from "../shared/types.ts";
+import type { StoredMessage, TurnEvent, TurnResult, RefusalReason } from "../shared/types.ts";
+import { retrieve, belowThreshold, DEFAULT_TAU, EMBEDDER, TOP_K } from "./retrieve.ts";
+import {
+  GENERATOR,
+  MAX_TOKENS,
+  buildMessages,
+  declined,
+  neuronsFor,
+  type ChatMessage,
+} from "./generate.ts";
+import { judge, JUDGE } from "./judge.ts";
 
 /**
- * One Durable Object per chat session.
+ * One Durable Object per chat session: conversation state plus the turn pipeline.
  *
- * Holds the conversation in its own embedded SQLite, and orchestrates the turn pipeline. This
- * skeleton stage proves the platform assumptions the design rests on — Workers AI responds, DO
- * SQLite persists across requests, and a streaming Response survives the hop from the Durable
- * Object out through the parent Worker without being buffered. Retrieval, refusal gating, and
- * the judge land on top of this same path.
+ * The pipeline is retrieve → gate → generate → gate → judge, and it is the single code path
+ * shared by the browser UI and the headless evaluation suite. That sharing is the point — an
+ * evaluation that ran its own reimplementation could drift from the thing it claims to measure.
  *
- * Deliberately a raw DurableObject rather than the Agents SDK: of what that SDK adds — request
- * routing, client state sync, scheduling, WebSocket helpers — this design uses none, having
- * already chosen an HTTP/SSE protocol it defines itself.
+ * Raw DurableObject rather than the Agents SDK: of what that SDK adds — routing, client state
+ * sync, scheduling, WebSocket helpers — this design uses none (see DESIGN.md Decision 8).
  */
-
-const GENERATOR = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
-
-/** Published rates, per million tokens. Used to report spend against the 10,000/day free tier. */
-const NEURONS_PER_M = { generatorIn: 26_668, generatorOut: 204_805 } as const;
-
-const SYSTEM_PROMPT =
-  "You are a concise assistant. Answer in at most three sentences.";
-
 export class ChatAgent extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    // Runs on every construction; CREATE TABLE IF NOT EXISTS makes that idempotent.
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id         TEXT PRIMARY KEY,
         role       TEXT NOT NULL,
         content    TEXT NOT NULL,
         created_at INTEGER NOT NULL
+      )
+    `);
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS turn_traces (
+        id            TEXT PRIMARY KEY,
+        question      TEXT NOT NULL,
+        refused       INTEGER NOT NULL,
+        refusal_reason TEXT,
+        result_json   TEXT NOT NULL,
+        created_at    INTEGER NOT NULL
       )
     `);
   }
@@ -44,12 +51,16 @@ export class ChatAgent extends DurableObject<Env> {
       return Response.json({ messages: this.history() });
     }
 
+    if (url.pathname.endsWith("/traces")) {
+      return Response.json({ traces: this.traces() });
+    }
+
     if (url.pathname.endsWith("/chat") && request.method === "POST") {
-      const { message } = (await request.json()) as { message?: string };
+      const { message, tau } = (await request.json()) as { message?: string; tau?: number };
       if (!message?.trim()) {
         return Response.json({ error: "message is required" }, { status: 400 });
       }
-      return this.streamTurn(message.trim());
+      return this.streamTurn(message.trim(), typeof tau === "number" ? tau : DEFAULT_TAU);
     }
 
     return new Response("Not found", { status: 404 });
@@ -69,6 +80,15 @@ export class ChatAgent extends DurableObject<Env> {
       }));
   }
 
+  private traces(): unknown[] {
+    return this.ctx.storage.sql
+      .exec<{ result_json: string }>(
+        "SELECT result_json FROM turn_traces ORDER BY created_at DESC LIMIT 20",
+      )
+      .toArray()
+      .map((r) => JSON.parse(r.result_json) as unknown);
+  }
+
   private save(role: StoredMessage["role"], content: string): void {
     this.ctx.storage.sql.exec(
       "INSERT INTO messages (id, role, content, created_at) VALUES (?, ?, ?, ?)",
@@ -79,61 +99,99 @@ export class ChatAgent extends DurableObject<Env> {
     );
   }
 
-  /**
-   * Streams the turn as server-sent events. The response body is produced lazily, so the first
-   * byte leaves the Durable Object before the model has finished generating — which is the
-   * property the streaming design depends on.
-   */
-  private streamTurn(message: string): Response {
+  private saveTrace(question: string, result: TurnResult): void {
+    this.ctx.storage.sql.exec(
+      "INSERT INTO turn_traces (id, question, refused, refusal_reason, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      crypto.randomUUID(),
+      question,
+      result.refused ? 1 : 0,
+      result.refusalReason,
+      JSON.stringify(result),
+      Date.now(),
+    );
+  }
+
+  private streamTurn(question: string, tau: number): Response {
     const started = Date.now();
-    const priorTurns = this.history();
-    this.save("user", message);
+    const priorTurns: ChatMessage[] = this.history().map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
 
     const encoder = new TextEncoder();
-    const send = (
-      controller: ReadableStreamDefaultController<Uint8Array>,
-      event: TurnEvent,
-    ): void => {
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
-    };
-
-    // `self` avoids `this` rebinding inside the stream callbacks.
     const self = this;
 
     const body = new ReadableStream<Uint8Array>({
       async start(controller) {
+        const send = (event: TurnEvent): void => {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        };
+
+        const finish = (
+          result: TurnResult,
+          persist: { user: boolean; assistant: string | null },
+        ): void => {
+          if (persist.user) self.save("user", question);
+          if (persist.assistant !== null) self.save("assistant", persist.assistant);
+          self.saveTrace(question, result);
+          send({ type: "done", result });
+        };
+
+        const models = { generator: GENERATOR, embedder: EMBEDDER, judge: JUDGE };
+
         try {
-          // Retrieval is not wired yet; the event is emitted with an empty set so the wire
-          // protocol is exercised end to end from the first deploy.
-          send(controller, { type: "retrieval", chunks: [], retrieveMs: 0 });
+          // ── retrieve ────────────────────────────────────────────────────────────────────
+          const r = await retrieve(self.env.AI, self.env.VECTORIZE, question, TOP_K);
+          send({ type: "retrieval", chunks: r.chunks, retrieveMs: r.retrieveMs });
 
-          const messages = [
-            { role: "system", content: SYSTEM_PROMPT },
-            ...priorTurns.map((m) => ({ role: m.role, content: m.content })),
-            { role: "user", content: message },
-          ];
+          // ── gate one: nothing similar enough, refuse before spending a token ────────────
+          if (belowThreshold(r.maxScore, tau)) {
+            const reason: RefusalReason = "low_similarity";
+            send({ type: "refusal", reason, maxScore: r.maxScore, tau });
+            finish(
+              {
+                answer: null,
+                refused: true,
+                refusalReason: reason,
+                retrieval: r.chunks,
+                timings: {
+                  embedMs: r.embedMs,
+                  retrieveMs: r.retrieveMs,
+                  generateMs: 0,
+                  judgeMs: 0,
+                  totalMs: Date.now() - started,
+                },
+                judge: null,
+                models,
+                neurons: Math.round(r.neurons * 100) / 100,
+              },
+              { user: true, assistant: null },
+            );
+            return;
+          }
 
+          // ── generate ────────────────────────────────────────────────────────────────────
           const generateStarted = Date.now();
           const upstream = (await self.env.AI.run(GENERATOR, {
-            messages,
+            messages: buildMessages(question, r.chunks, priorTurns),
             stream: true,
-            max_tokens: 256,
+            max_tokens: MAX_TOKENS,
           })) as unknown as ReadableStream<Uint8Array>;
 
           let answer = "";
           let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
-
-          // Workers AI streams its own SSE. Parse it, re-emit under this protocol's event
-          // names, and accumulate the full text for persistence.
           const reader = upstream.getReader();
           const decoder = new TextDecoder();
           let buffer = "";
+          // The sentinel must not be streamed to the user as if it were an answer, and it
+          // arrives token by token, so emission is held until it can be ruled out.
+          let sentinelPossible = true;
+          let held = "";
 
           for (;;) {
             const { done, value } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
-
             const lines = buffer.split("\n");
             buffer = lines.pop() ?? "";
 
@@ -147,45 +205,83 @@ export class ChatAgent extends DurableObject<Env> {
                   usage?: { prompt_tokens?: number; completion_tokens?: number };
                 };
                 if (parsed.usage) usage = parsed.usage;
-                if (parsed.response) {
-                  answer += parsed.response;
-                  send(controller, { type: "token", delta: parsed.response });
+                if (!parsed.response) continue;
+                answer += parsed.response;
+
+                if (sentinelPossible) {
+                  held += parsed.response;
+                  const upper = held.trimStart().toUpperCase();
+                  if ("INSUFFICIENT_CONTEXT".startsWith(upper) && upper.length > 0) {
+                    if (upper.length < "INSUFFICIENT_CONTEXT".length) continue;
+                    sentinelPossible = false;
+                    continue; // confirmed sentinel — never emitted as answer text
+                  }
+                  sentinelPossible = false;
+                  send({ type: "token", delta: held });
+                  held = "";
+                  continue;
                 }
+                send({ type: "token", delta: parsed.response });
               } catch {
-                // A partial JSON frame at a chunk boundary is expected; the next read completes it.
+                // Partial JSON at a chunk boundary; the next read completes it.
               }
             }
           }
 
           const generateMs = Date.now() - generateStarted;
-          self.save("assistant", answer);
+          const genNeurons = neuronsFor(usage?.prompt_tokens ?? 0, usage?.completion_tokens ?? 0);
 
-          const inTok = usage?.prompt_tokens ?? 0;
-          const outTok = usage?.completion_tokens ?? 0;
-          const neurons =
-            (inTok * NEURONS_PER_M.generatorIn + outTok * NEURONS_PER_M.generatorOut) / 1_000_000;
+          // ── gate two: retrieval scored fine but the passages do not answer it ───────────
+          if (declined(answer)) {
+            const reason: RefusalReason = "model_declined";
+            send({ type: "refusal", reason, maxScore: r.maxScore, tau });
+            finish(
+              {
+                answer: null,
+                refused: true,
+                refusalReason: reason,
+                retrieval: r.chunks,
+                timings: {
+                  embedMs: r.embedMs,
+                  retrieveMs: r.retrieveMs,
+                  generateMs,
+                  judgeMs: 0,
+                  totalMs: Date.now() - started,
+                },
+                judge: null,
+                models,
+                neurons: Math.round((r.neurons + genNeurons) * 100) / 100,
+              },
+              { user: true, assistant: null },
+            );
+            return;
+          }
 
-          send(controller, {
-            type: "done",
-            result: {
+          // ── judge ───────────────────────────────────────────────────────────────────────
+          const j = await judge(self.env.AI, question, answer, r.chunks);
+          send({ type: "judge", verdict: j.verdict });
+
+          finish(
+            {
               answer,
               refused: false,
               refusalReason: null,
-              retrieval: [],
+              retrieval: r.chunks,
               timings: {
-                embedMs: 0,
-                retrieveMs: 0,
+                embedMs: r.embedMs,
+                retrieveMs: r.retrieveMs,
                 generateMs,
-                judgeMs: 0,
+                judgeMs: j.judgeMs,
                 totalMs: Date.now() - started,
               },
-              judge: null,
-              models: { generator: GENERATOR, embedder: "", judge: "" },
-              neurons: Math.round(neurons * 100) / 100,
+              judge: j.verdict,
+              models,
+              neurons: Math.round((r.neurons + genNeurons + j.neurons) * 100) / 100,
             },
-          });
+            { user: true, assistant: answer },
+          );
         } catch (error) {
-          send(controller, {
+          send({
             type: "error",
             message: error instanceof Error ? error.message : String(error),
           });
