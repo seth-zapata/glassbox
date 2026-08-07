@@ -1,0 +1,7 @@
+{
+  "_comment": "Regression floors asserted by `npm run eval:replay` on every PR. Replay is deterministic over committed fixtures, so these only bite when someone re-records and the numbers get worse — which is exactly when a gate should bite. Set just below measured values, allowing roughly one case of drift on the softer metrics and none on the headline refusal rate.",
+  "outOfCorpusRefusalRate": 1.0,
+  "inCorpusFalseRefusalRateMax": 0.084,
+  "meanFaithfulnessMin": 0.9,
+  "retrievalHitRateMin": 0.9
+}

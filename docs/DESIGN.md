@@ -456,6 +456,87 @@ underneath a framework that is doing the coordinating.
 
 ---
 
+## 5b. ✅ Measured 2026-08-07 — τ is not the artifact. The sentinel gate is.
+
+First full recording: 28 cases, 2,531 neurons, τ = 0.62.
+
+| bucket | n | refusal | false-refusal | faithfulness | hit@6 | MRR |
+|---|---|---|---|---|---|---|
+| in_corpus_factual | 12 | — | **0.0%** | **1.000** | 1.000 | 0.861 |
+| out_of_corpus | 8 | **100.0%** | — | — | — | — |
+| ambiguous | 5 | — | — | 0.875 | — | — |
+| adversarial | 3 | — | 0.0% | 1.000 | 0.667 | 0.444 |
+
+### The threshold sweep says τ does nothing for correctness
+
+| τ | out-of-corpus refused | in-corpus wrongly refused |
+|---|---|---|
+| 0.45 – 0.65 | 100% | 0% |
+| 0.70 | 100% | 8.3% |
+| 0.80 | 100% | 25.0% |
+| 0.85 | 100% | 33.3% |
+
+Refusal is **100% at every threshold tested**, and raising τ only ever adds false refusals. The
+design predicted a tradeoff curve to tune along; there isn't one.
+
+**Why: the score distributions overlap.**
+
+```
+in-corpus     0.683 ──────────────────────── 0.886
+out-of-corpus 0.544 ─────────────── 0.757
+                          ^^^^^^^^^^^^^^ overlap
+```
+
+The *highest*-scoring out-of-corpus question (0.757 — "what is Cloudflare's refund policy for
+enterprise contracts") outranks the *lowest*-scoring in-corpus one (0.683 — "what is an
+authorization code"). **No threshold separates them.** Similarity alone cannot do this job, and
+that is now measured rather than asserted.
+
+### Gate attribution — where the refusals actually come from
+
+At τ = 0.62, of eight out-of-corpus questions:
+
+- **gate one (similarity) catches 2** — `oc-01`, `oc-03`
+- **gate two (sentinel) catches 6** — `oc-02`, `oc-04`, `oc-05`, `oc-06`, `oc-07`, `oc-08`
+
+A similarity-only design would have let **six of eight** through to generation. Decision 4's
+premise — that retrieval can return topically-close passages which do not answer the question —
+is exactly what happened, and it is the common case rather than the edge case.
+
+### What τ is actually for
+
+Not correctness — **cost and latency**. Gate one refuses for **0.09 neurons and ~477 ms**; gate
+two costs a full generation, roughly **100 neurons and ~4.5 s**. So τ should be set as high as
+possible *without* causing false refusals, which this sweep puts at **≤ 0.65**. Keeping τ = 0.62
+buys the cheap refusal on the clearly-unrelated questions while leaving correctness to gate two.
+
+**Corrections to earlier claims in this document:**
+
+- §6 called the τ tradeoff table "the single most convincing artifact in the repo." It is not.
+  The gate-attribution result is, because it shows a design decision earning its place. The
+  sweep's value turned out to be *negative* evidence — proving the simpler design would have
+  failed.
+- Decision 2 justified building retrieval by hand partly because "the threshold is the artifact."
+  The better justification is the one that survived measurement: owning the pipeline is what made
+  gate two possible at all, and a managed retrieval service would have had no place to put it.
+
+### Other findings
+
+- **The judge is the latency bottleneck** — p95 6,628 ms against generation's 2,355 ms. It runs
+  after the answer has fully streamed, so it never delays the user's read, but it dominates the
+  headless eval.
+- **Adversarial retrieval is weakest** — hit@6 0.667, MRR 0.444 against 1.000/0.861 for
+  straightforward in-corpus questions. False premises pull the query embedding away from the
+  passage that refutes them. The model still corrected all three, so generation compensated for
+  retrieval; worth noting as the place a larger corpus would hurt first.
+- **The judge failed twice more, and again visibly.** Two in-corpus answers scored 0 in the first
+  recording — both were unparseable judge output, not unfaithful answers. Same root cause as
+  before: gpt-oss spends its budget reasoning and returns `chat.completion` with empty content.
+  Raising `max_tokens` to 1500 fixed both. Three separate encounters with this one model's
+  behaviour is a fair argument for preferring a non-reasoning judge.
+
+---
+
 ## 6. The evaluation system
 
 ### Eval set — `eval/eval-set.jsonl`, 25–30 cases, committed
