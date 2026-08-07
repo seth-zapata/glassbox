@@ -633,7 +633,58 @@ neurons a day instead of a credit card. That's worth a paragraph in the README.
 
 ---
 
-## 14. Open questions
+## 14. Repository and workflow
+
+Set up **before** any application code, deliberately. If the repo were initialized after the
+skeleton existed, the history would open with one large unexplained commit — the exact shape
+that reads as unreviewed bulk generation.
+
+**Repo:** `seth-zapata/glassbox` — **private during the build, public at submission.** Full
+history is preserved when it flips, so nothing is lost by waiting, and it leaves room to correct
+an accidental credential commit before the content is permanently public and indexed.
+
+**Commit identity:** `79075063+seth-zapata@users.noreply.github.com`. Attributes to the GitHub
+account and counts toward the contribution graph without putting a personal address in a public
+repository's permanent history. Set repo-locally, not globally — the machine's global git
+identity is a separate decision.
+
+**Branch protection is not yet enforced.** GitHub rulesets require Pro or a public repository
+(verified: `POST /repos/.../rulesets` returns 403 while private). Until the flip, PR-only is a
+convention. Run this at the moment the repo goes public, so the CI gate is actually binding:
+
+```sh
+gh repo edit seth-zapata/glassbox --visibility public --accept-visibility-change-consequences
+gh api -X POST repos/seth-zapata/glassbox/rulesets \
+  -f name='require-pr-to-main' -f target='branch' -f enforcement='active' \
+  -F 'conditions[ref_name][include][]=~DEFAULT_BRANCH' \
+  -F 'rules[][type]=pull_request'
+```
+
+### Prompt-history pipeline
+
+| Command | Does |
+|---|---|
+| `npm run transcript` | Renders all session logs → `transcripts/PROMPT_HISTORY.md`, merging both transcript directories in timestamp order |
+| `npm run transcript:check` | Fails if any private phrase or credential pattern survived |
+
+Three bugs found while building this, worth recording because each was silent:
+
+1. **Every tool result was being dropped.** The render loop skipped non-`assistant` entries, but
+   tool results arrive as `user` entries — so 88 of them vanished. The output looked clean
+   because it was nearly empty, which is the most dangerous kind of passing check.
+2. **The leak checker was the leak.** The first version was a shell loop echoing each search
+   phrase next to its count, which wrote every sensitive phrase into the *next* export. It now
+   reports by index and never prints what it searched for.
+3. **Redaction matched the wrong thing.** Private-file detection scanned tool-result *bodies* for
+   a path that a file read does not necessarily echo. It now resolves `tool_use_id` → the
+   originating call's target, with body scanning kept only as a fallback.
+
+Reasoning blocks are present in the logs but carry no text — only a signature — so they render
+as nothing and are skipped.
+
+---
+
+## 15. Open questions
 
 None blocking. Day 0 is the free Cloudflare account plus `wrangler login`; everything after that
 is build work.

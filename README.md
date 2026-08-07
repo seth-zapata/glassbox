@@ -72,7 +72,11 @@ npm run whoami         # confirm authentication
 This repository is also a demonstration of a continuous-integration workflow, so the process is
 part of the deliverable rather than incidental to it.
 
-- **`main` is never committed to directly.** Every change lands through a pull request.
+- **`main` is never committed to directly.** Every change lands through a pull request. While
+  this repository is private, that is enforced by convention rather than mechanically —
+  GitHub branch rulesets require Pro or a public repository. The ruleset is applied at the same
+  moment the repository is made public; the exact command is in
+  [`docs/DESIGN.md`](docs/DESIGN.md) §14 so it isn't reconstructed from memory later.
 - **Two CI tiers.** Every PR runs typecheck, lint, unit tests, and the evaluation suite replayed
   against committed fixtures — no credentials, no model calls, and it **blocks the merge** if a
   metric drops below its committed floor. A second tier runs the live evaluation against real
