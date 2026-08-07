@@ -50,7 +50,11 @@ function gitSha(): string {
 }
 
 async function runCase(c: EvalCase): Promise<RecordedCase> {
-  const res = await fetch(`${WORKER}/api/chat?session=eval-${c.id}-${Date.now()}`, {
+  // A fresh Durable Object per case, so no case inherits another's conversation. Uses a UUID
+  // rather than a composed string: the id must clear the 24-character minimum, and
+  // `eval-${c.id}-${Date.now()}` lands on exactly 24 for the current case ids — one shorter id
+  // in the eval set would 400 every case in the nightly recording.
+  const res = await fetch(`${WORKER}/api/chat?session=${crypto.randomUUID()}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     // tau: 0 disables gate one for recording; replay applies thresholds offline.
