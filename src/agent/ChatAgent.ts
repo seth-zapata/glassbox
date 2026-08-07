@@ -41,6 +41,11 @@ export class ChatAgent extends DurableObject<Env> {
     } catch {
       // Column already present.
     }
+    try {
+      this.ctx.storage.sql.exec("ALTER TABLE messages ADD COLUMN trace_id TEXT");
+    } catch {
+      // Column already present.
+    }
     this.ctx.storage.sql.exec(`
       CREATE TABLE IF NOT EXISTS turn_traces (
         id            TEXT PRIMARY KEY,
@@ -57,7 +62,7 @@ export class ChatAgent extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (url.pathname.endsWith("/history")) {
-      return Response.json({ messages: this.history() });
+      return Response.json({ messages: this.historyWithTraces() });
     }
 
     if (url.pathname.endsWith("/traces")) {
@@ -83,8 +88,9 @@ export class ChatAgent extends DurableObject<Env> {
         content: string;
         created_at: number;
         refusal_reason: string | null;
+        trace_id: string | null;
       }>(
-        "SELECT id, role, content, created_at, refusal_reason FROM messages ORDER BY created_at ASC",
+        "SELECT id, role, content, created_at, refusal_reason, trace_id FROM messages ORDER BY created_at ASC",
       )
       .toArray()
       .map((r) => ({
@@ -93,7 +99,37 @@ export class ChatAgent extends DurableObject<Env> {
         content: r.content,
         createdAt: r.created_at,
         refusalReason: (r.refusal_reason as RefusalReason | null) ?? null,
+        traceId: r.trace_id ?? null,
       }));
+  }
+
+  /**
+   * Conversation plus the evaluation envelope recorded for each turn.
+   *
+   * Chunk bodies are stripped: the panel renders titles and scores, never the passage text, so
+   * shipping ~10 KB of prose per turn would inflate the restore payload roughly tenfold for
+   * something that is not displayed.
+   */
+  private historyWithTraces(): Array<StoredMessage & { trace: TurnResult | null }> {
+    const traces = new Map<string, TurnResult>();
+    for (const row of this.ctx.storage.sql
+      .exec<{ id: string; result_json: string }>("SELECT id, result_json FROM turn_traces")
+      .toArray()) {
+      try {
+        traces.set(row.id, JSON.parse(row.result_json) as TurnResult);
+      } catch {
+        // A malformed row must not take down the whole restore.
+      }
+    }
+
+    return this.history().map((m) => {
+      const full = m.traceId ? traces.get(m.traceId) : undefined;
+      if (!full) return { ...m, trace: null };
+      return {
+        ...m,
+        trace: { ...full, retrieval: full.retrieval.map(({ text, ...rest }) => ({ ...rest, text: "" })) },
+      };
+    });
   }
 
   private traces(): unknown[] {
@@ -109,21 +145,23 @@ export class ChatAgent extends DurableObject<Env> {
     role: StoredMessage["role"],
     content: string,
     refusalReason: RefusalReason | null = null,
+    traceId: string | null = null,
   ): void {
     this.ctx.storage.sql.exec(
-      "INSERT INTO messages (id, role, content, created_at, refusal_reason) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, role, content, created_at, refusal_reason, trace_id) VALUES (?, ?, ?, ?, ?, ?)",
       crypto.randomUUID(),
       role,
       content,
       Date.now(),
       refusalReason,
+      traceId,
     );
   }
 
-  private saveTrace(question: string, result: TurnResult): void {
+  private saveTrace(question: string, result: TurnResult, traceId: string): void {
     this.ctx.storage.sql.exec(
       "INSERT INTO turn_traces (id, question, refused, refusal_reason, result_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      crypto.randomUUID(),
+      traceId,
       question,
       result.refused ? 1 : 0,
       result.refusalReason,
@@ -146,11 +184,12 @@ export class ChatAgent extends DurableObject<Env> {
         };
 
         const finish = (result: TurnResult, assistantText: string | null): void => {
+          const traceId = crypto.randomUUID();
           self.save("user", question);
           if (assistantText !== null) {
-            self.save("assistant", assistantText, result.refusalReason);
+            self.save("assistant", assistantText, result.refusalReason, traceId);
           }
-          self.saveTrace(question, result);
+          self.saveTrace(question, result, traceId);
           send({ type: "done", result });
         };
 

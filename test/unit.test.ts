@@ -207,7 +207,7 @@ describe("replayableContext", () => {
     role: "user" | "assistant",
     content: string,
     refusalReason: "low_similarity" | "model_declined" | null = null,
-  ) => ({ id: content, role, content, createdAt: 0, refusalReason });
+  ) => ({ id: content, role, content, createdAt: 0, refusalReason, traceId: null });
 
   test("keeps ordinary question/answer pairs", () => {
     const ctx = replayableContext([msg("user", "q1"), msg("assistant", "a1")]);

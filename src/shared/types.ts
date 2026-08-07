@@ -69,4 +69,6 @@ export interface StoredMessage {
    * output would be inventing history it never produced.
    */
   refusalReason: RefusalReason | null;
+  /** Links to the turn_traces row holding the evaluation envelope for this turn. */
+  traceId: string | null;
 }
