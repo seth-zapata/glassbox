@@ -11,6 +11,9 @@ name: Evaluation (live)
 # free. This workflow answers a different question: has the *deployed* system drifted since those
 # fixtures were recorded? It records fresh, replays the fresh recording against the committed
 # floors, and fails if any floor breaks. A failure is the alarm, and failures notify.
+#
+# NOTE: GitHub disables scheduled workflows in public repositories after 60 days without commit
+# activity. On a repository that goes quiet, this will stop firing silently.
 on:
   workflow_dispatch:
     inputs:
@@ -19,11 +22,21 @@ on:
         type: boolean
         default: false
   schedule:
-    # Shortly after the 00:00 UTC neuron reset, so the recording draws on a full allocation
-    # rather than competing with a day of demo traffic. The first scheduled run went out at
-    # 09:17 and contended with human use; the allocation was gone by early afternoon and the
-    # deployed demo hard-failed along with it.
-    - cron: "20 0 * * *"
+    # Weekly, Saturdays at 00:20 UTC.
+    #
+    # Timing: shortly after the 00:00 UTC neuron reset, so the recording draws on a full
+    # allocation rather than competing with demo traffic. The first scheduled run went out at
+    # 09:17 mid-week, took a quarter of that day's allocation, and by early afternoon the budget
+    # was gone and the deployed page was hard-failing for visitors along with it.
+    #
+    # Cadence: weekly rather than nightly. The deployment is fixed, so day-to-day quality drift
+    # is unlikely; what a daily run reliably produced was contention for the one free allocation
+    # the demo also draws on. Weekly keeps drift detection while giving the page six clear days.
+    # The trade is slower detection, which is the right way round when the failure being watched
+    # for is rare and the cost of watching is the service itself going down.
+    #
+    # Run it by hand any time via workflow_dispatch — that path costs the same but is deliberate.
+    - cron: "20 0 * * 6"
 
 concurrency:
   group: eval-live
@@ -130,7 +143,7 @@ jobs:
             echo "Recorded against the deployed Worker and replayed against \`eval/floors.json\`."
             echo "A failure here means the deployed system drifted below a committed floor."
             echo ""
-            echo "Costs ~2,500 of 10,000 free neurons/day, which is why this is nightly rather"
+            echo "Costs ~2,500 of 10,000 free neurons/day, which is why this is weekly rather"
             echo "than per-push. Fixtures are only proposed when run manually with"
             echo "\`refresh_fixtures\`, because they carry timings that differ every run."
             if [ "${{ steps.record.outputs.budget_exhausted }}" = "true" ]; then
