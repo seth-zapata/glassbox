@@ -9,6 +9,7 @@
 import { ingest } from "./agent/ingest.ts";
 import type { CorpusDoc } from "./agent/chunk.ts";
 import { sessionIdFrom } from "./shared/session.ts";
+import { readBudget } from "./agent/budget.ts";
 import { writeRun, listRuns, type EvalRunSummary, type EvalCaseRow } from "./agent/evalStore.ts";
 
 export { ChatAgent } from "./agent/ChatAgent.ts";
@@ -74,6 +75,15 @@ export default {
       // recording ran on the client's clock anyway.
       const written = await writeRun(env.DB, body.summary, body.cases, body.recordedAt ?? Date.now());
       return Response.json(written);
+    }
+
+    // Public read. The allocation governs whether this app answers at all, so it is shown
+    // rather than hidden — and it reports the window that is actually enforced, not the
+    // calendar-day counter that reads reassuringly while every request is failing.
+    if (url.pathname === "/api/budget") {
+      return Response.json(await readBudget(env), {
+        headers: { "cache-control": "public, max-age=30" },
+      });
     }
 
     // Public read — the evaluation history is the point of publishing this at all.

@@ -8,4 +8,8 @@
 interface Env {
   /** Shared secret guarding /api/admin/ingest. Set: npx wrangler secret put INGEST_TOKEN */
   INGEST_TOKEN?: string;
+  /** Cloudflare API token with Account Analytics:Read, for reading real neuron usage. */
+  CF_ANALYTICS_TOKEN?: string;
+  /** Account tag the analytics query filters on. */
+  CF_ACCOUNT_TAG?: string;
 }

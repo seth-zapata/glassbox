@@ -17,6 +17,7 @@ import { declined, neuronsFor, replayableContext, INSUFFICIENT } from "../src/ag
 import { belowThreshold, DEFAULT_TAU } from "../src/agent/retrieve.ts";
 import { refusalMessage, CORPUS_SCOPE } from "../src/shared/scope.ts";
 import { sessionIdFrom } from "../src/shared/session.ts";
+import { summarise, projectRecovery } from "../src/agent/budget.ts";
 
 const doc = (body: string): CorpusDoc => ({
   id: "d",
@@ -297,5 +298,58 @@ describe("sessionIdFrom", () => {
   test("rejects ids that are too long or contain separators", () => {
     assert.equal(at(`?session=${"a".repeat(65)}`), null);
     assert.equal(at("?session=../../etc/passwd-aaaaaaaaaaaaaa"), null);
+  });
+});
+
+describe("budget projection", () => {
+  const H = 3_600_000;
+  // Reconstructed from the real incident: a large evening burst plus a morning recording put the
+  // rolling window over the limit while the calendar-day counter still read 2,492.
+  const now = Date.parse("2026-08-08T15:29:00Z");
+  const buckets = [
+    { hour: Date.parse("2026-08-07T20:00:00Z"), neurons: 5879.7 },
+    { hour: Date.parse("2026-08-07T21:00:00Z"), neurons: 1756.2 },
+    { hour: Date.parse("2026-08-07T22:00:00Z"), neurons: 553.4 },
+    { hour: Date.parse("2026-08-08T09:00:00Z"), neurons: 2492.0 },
+  ];
+
+  test("reports the enforced window, not the calendar day", () => {
+    const s = summarise(buckets, now);
+    assert.equal(Math.round(s.windowNeurons), 10681);
+    assert.equal(Math.round(s.calendarDayNeurons), 2492);
+    assert.ok(s.exhausted, "over the limit on the enforced window");
+  });
+
+  test("remaining never goes negative", () => {
+    assert.equal(summarise(buckets, now).remaining, 0);
+  });
+
+  test("projects recovery to the hour the biggest bucket ages out", () => {
+    // The 20:00Z bucket leaves the window at 20:00Z the next day, dropping it to ~4,802.
+    const at = projectRecovery(buckets, now);
+    assert.ok(at, "a recovery time should exist");
+    assert.equal(new Date(at!).toISOString(), "2026-08-08T20:00:00.000Z");
+  });
+
+  test("the projection is stable regardless of when it is asked", () => {
+    // Stepping from the current instant made the answer drift with the clock; asked at 15:45 it
+    // said 20:45 and at 16:00 it said 21:00, which reads as instability rather than an estimate.
+    const asked = ["2026-08-08T15:01:00Z", "2026-08-08T15:45:00Z", "2026-08-08T15:59:59Z"];
+    const answers = asked.map((t) => projectRecovery(buckets, Date.parse(t)));
+    assert.equal(new Set(answers).size, 1, `expected one answer, got ${JSON.stringify(answers)}`);
+    assert.equal(answers[0], "2026-08-08T20:00:00.000Z");
+  });
+
+  test("a window under the limit is not exhausted and has no recovery time", () => {
+    const light = [{ hour: now - 2 * H, neurons: 500 }];
+    const s = summarise(light, now);
+    assert.equal(s.exhausted, false);
+    assert.equal(s.recoversAt, null);
+    assert.equal(s.remaining, 9500);
+  });
+
+  test("usage older than the window is excluded", () => {
+    const stale = [{ hour: now - 30 * H, neurons: 9999 }];
+    assert.equal(summarise(stale, now).windowNeurons, 0);
   });
 });

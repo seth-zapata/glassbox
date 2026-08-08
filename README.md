@@ -77,6 +77,34 @@ So the threshold is not a correctness control — it is a **cost** control. A si
 costs 0.09 neurons and ~477 ms; a sentinel refusal costs a full generation, ~100 neurons and
 ~4.5 s. τ is set as high as it can go without causing false refusals.
 
+### The budget is part of the interface
+
+The free plan allows **10,000 neurons per rolling 24 hours** and then hard-fails. An app about
+showing its own machinery should not hide the one constraint that decides whether it answers at
+all, so the header carries a live gauge and a blocked question explains itself instead of
+surfacing a raw `4006`.
+
+The figures come from Cloudflare's `aiInferenceAdaptiveGroups` analytics dataset — the same source
+the dashboard uses. Nothing is estimated from token counts, so nothing drifts.
+
+**Two numbers disagree, and the reassuring one is wrong.** The limit is enforced over a rolling
+24-hour window; the Cloudflare console shows a calendar-day counter that resets at 00:00 UTC.
+Measured on this account while every request was failing:
+
+| | |
+|---|---|
+| calendar-day usage (what the console shows) | 2,492 / 10,000 |
+| trailing 24h (what is enforced) | **10,681 / 10,000** |
+
+Nothing in the console indicates the two differ. The gauge reports the enforced window and
+projects recovery by ageing hourly buckets out of it, which on that day was roughly four hours
+earlier than the implied midnight reset.
+
+*Caveat:* analytics aggregate with a short lag, and enforcement counters appear to lag as well —
+a burst can overshoot before the limiter catches up, which is how a 2,500-neuron recording
+completed against ~1,800 of headroom. The gauge is reliable for planning and approximate at the
+very margin.
+
 ### Latency by stage (p50 / p95, ms)
 
 | embed | retrieve | generate | judge | total |
@@ -202,12 +230,11 @@ Stated plainly, because a project about honest measurement should be honest abou
   judgement the harness does not make; those five cases are reported, not scored.
 - **One region, one language, no load testing.** Latency figures are single-client from one place.
 - **The free allocation is shared between the demo and its own test suite.** A full recording
-  costs ~2,500 of 10,000 daily neurons, and once the allocation is gone every request hard-fails
-  until 00:00 UTC — the live page included. The nightly run was moved to just after the reset for
-  this reason, and it now stops and warns rather than failing when the budget is already spent, so
-  a budget condition never raises the same alarm as a real regression. On a busy demo day the
-  page can still run out. The scheduled recording is weekly, just after the reset, for this
-  reason.
+  costs ~2,500 of the 10,000 neurons, and once the allowance is gone every request hard-fails —
+  the live page included. The recording is weekly rather than nightly for this reason, and it
+  stops and warns rather than failing when the budget is already spent, so a budget condition
+  never raises the same alarm as a real regression. On a busy day the page can still run out; when
+  it does, the page says so and projects when it returns.
 - **There is no authentication, and the session id is a bearer capability.** Conversations are
   isolated per session — a random id is minted in `localStorage` on first visit, so opening the
   public URL never shows anyone else's history — but whoever holds an id can read that

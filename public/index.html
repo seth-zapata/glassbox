@@ -121,6 +121,25 @@
       .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); flex: none; }
       .dot.up { background: var(--good); }
       .dot.down { background: var(--critical); }
+      .budget {
+        display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.72rem;
+        color: var(--ink-2); border: 1px solid var(--hairline); border-radius: 0.4rem;
+        padding: 0.22rem 0.5rem; background: var(--surface-1); white-space: nowrap; cursor: help;
+      }
+      .budget .bar {
+        width: 46px; height: 5px; border-radius: 3px; background: var(--seq-track); overflow: hidden;
+      }
+      .budget .bar span { display: block; height: 5px; background: var(--seq); border-radius: 3px; }
+      .budget.out { color: var(--critical); border-color: currentColor; }
+      .budget.out .bar span { background: var(--critical); }
+
+      .notice {
+        border: 1px solid var(--warning); border-radius: 0.65rem; padding: 0.85rem 1rem;
+        margin-bottom: 1.5rem; font-size: 0.88rem; color: var(--ink-2);
+      }
+      .notice strong { color: var(--ink-1); }
+      .notice .head { display: flex; align-items: center; gap: 0.4rem; color: var(--warning); font-weight: 650; margin-bottom: 0.35rem; }
+
       .ghost-link {
         font-size: 0.75rem; color: var(--ink-2); text-decoration: none;
         border: 1px solid var(--hairline); border-radius: 0.4rem; padding: 0.25rem 0.55rem;
@@ -293,6 +312,7 @@
         </div>
         <div class="spacer"></div>
         <span class="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
+        <span class="budget" id="budget" hidden></span>
         <a class="ghost-link" href="https://github.com/seth-zapata/glassbox" rel="noopener">Source</a>
       </div>
     </div>
@@ -303,6 +323,8 @@
         <strong>18 Cloudflare Registrar documents</strong>. It refuses when the corpus cannot
         support an answer — and shows the evidence, the grade, and the cost either way.
       </p>
+
+      <div id="notice"></div>
 
       <div class="starters" id="starters">
         <button class="starter" data-q="How long is the transfer lock after changing my registrant contact information?">
@@ -669,8 +691,25 @@
               }
             } else if (evt.type === "error") {
               caret.remove();
-              setText(`Error: ${evt.message}`);
-              verdictSlot.replaceChildren(badge("critical", "✕", "error"));
+              // An error can arrive before any retrieval event, leaving the skeleton spinning
+              // forever. A stuck loading state reads as a hang; say what happened instead.
+              evidence.replaceChildren(
+                el("div", "scale-note", "No evidence was retrieved — the turn ended before retrieval ran."),
+              );
+              const outOfBudget = /\b4006\b|daily free allocation/i.test(evt.message || "");
+              if (outOfBudget) {
+                answerEl.classList.add("refused");
+                setText(
+                  "Out of Workers AI budget. This runs on Cloudflare's free plan, which allows " +
+                  "10,000 neurons per rolling 24 hours, and that allowance is currently spent. " +
+                  "See the banner above for when it returns.",
+                );
+                verdictSlot.replaceChildren(badge("warning", "⊘", "no budget"));
+                void refreshBudget();
+              } else {
+                setText(`Error: ${evt.message}`);
+                verdictSlot.replaceChildren(badge("critical", "✕", "error"));
+              }
             }
           }
         }
@@ -687,6 +726,9 @@
           send.disabled = false;
           input.disabled = false;
           input.focus();
+          // Measured, not estimated, so it trails the turn by a few minutes. The per-turn cost
+          // in the panel above is exact and immediate; this is the account-wide position.
+          void refreshBudget();
         }
       }
 
@@ -727,6 +769,83 @@
         }
       }
 
+      const budgetEl = document.getElementById("budget");
+      const noticeEl = document.getElementById("notice");
+
+      const nf = new Intl.NumberFormat();
+      const clockUTC = (iso) =>
+        new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "UTC" }) + " UTC";
+      const clockLocal = (iso) =>
+        new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+      /**
+       * The allocation is enforced over a rolling 24-hour window, while Cloudflare's own console
+       * shows a calendar-day counter that resets at 00:00 UTC. Those diverge — this account has
+       * read "2,492 / 10,000" on the console while every request was being refused. The figure
+       * shown here is the enforced one, measured from Cloudflare's analytics rather than
+       * estimated from token counts.
+       */
+      async function refreshBudget() {
+        let b;
+        try {
+          b = await (await fetch("/api/budget")).json();
+        } catch {
+          return;
+        }
+        if (!b.available) {
+          budgetEl.hidden = true;
+          return;
+        }
+        budgetEl.hidden = false;
+        budgetEl.classList.toggle("out", b.exhausted);
+
+        const pct = Math.min(100, (b.windowNeurons / b.limit) * 100);
+        budgetEl.replaceChildren();
+        const bar = el("span", "bar");
+        const fill = el("span");
+        fill.style.width = `${pct}%`;
+        bar.append(fill);
+        budgetEl.append(
+          bar,
+          el("span", null, b.exhausted
+            ? "no budget left"
+            : `${nf.format(Math.round(b.remaining))} neurons left`),
+        );
+        budgetEl.title =
+          `${nf.format(Math.round(b.windowNeurons))} of ${nf.format(b.limit)} neurons used in the ` +
+          `last ${b.windowHours}h — the window Cloudflare actually enforces.\n` +
+          `Calendar-day total is ${nf.format(Math.round(b.calendarDayNeurons))}, which is what the ` +
+          `Cloudflare console shows; it is not the number that blocks requests.\n` +
+          `Measured from Cloudflare analytics, which lag a few minutes.` +
+          (b.byModel?.length ? `\n\n` + b.byModel.map((m) => `${nf.format(Math.round(m.neurons))}  ${m.modelId}`).join("\n") : "");
+
+        noticeEl.replaceChildren();
+        if (b.exhausted) {
+          const n = el("div", "notice");
+          const head = el("div", "head");
+          head.append(el("span", null, "⊘"), el("span", null, "Out of Workers AI budget"));
+          n.append(head);
+          const body = el("div");
+          body.append(
+            document.createTextNode("This runs on Cloudflare's free plan: "),
+            el("strong", null, `${nf.format(b.limit)} neurons per rolling ${b.windowHours} hours`),
+            document.createTextNode(
+              ". That allowance is currently spent, so questions cannot be answered. It is not a fault — " +
+              "usage ages out of the window continuously, and the weekly evaluation run takes about a " +
+              "quarter of the allowance in one go."),
+          );
+          if (b.recoversAt) {
+            body.append(
+              document.createTextNode(" Service is projected to return around "),
+              el("strong", null, `${clockUTC(b.recoversAt)} (${clockLocal(b.recoversAt)} your time)`),
+              document.createTextNode("."),
+            );
+          }
+          n.append(body);
+          noticeEl.append(n);
+        }
+      }
+
       async function health() {
         try {
           const res = await fetch("/api/health");
@@ -741,6 +860,7 @@
 
       void health();
       void restore();
+      void refreshBudget();
     </script>
   </body>
 </html>
