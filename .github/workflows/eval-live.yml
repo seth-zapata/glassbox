@@ -19,8 +19,11 @@ on:
         type: boolean
         default: false
   schedule:
-    # Nightly, after the 00:00 UTC neuron reset so the day's budget is intact.
-    - cron: "17 9 * * *"
+    # Shortly after the 00:00 UTC neuron reset, so the recording draws on a full allocation
+    # rather than competing with a day of demo traffic. The first scheduled run went out at
+    # 09:17 and contended with human use; the allocation was gone by early afternoon and the
+    # deployed demo hard-failed along with it.
+    - cron: "20 0 * * *"
 
 concurrency:
   group: eval-live
@@ -53,18 +56,33 @@ jobs:
       - name: Record against the deployed Worker
         # No Cloudflare credentials needed — recording drives the public chat endpoint, the same
         # path a user drives. That is the point of sharing one code path.
-        run: npm run eval:record
+        id: record
+        run: |
+          set +e
+          npm run eval:record
+          code=$?
+          set -e
+          # Exit 3 means the daily Workers AI allocation is gone. That is a budget condition,
+          # not a quality signal, and failing the run for it would raise an alarm identical to a
+          # real regression — which is how people learn to ignore the real one.
+          if [ "$code" -eq 3 ]; then
+            echo "budget_exhausted=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::Daily Workers AI allocation exhausted; recording skipped. Not a quality regression — the allocation resets at 00:00 UTC."
+            exit 0
+          fi
+          exit "$code"
 
       - name: Replay the fresh recording against committed floors
         # The alarm. If the deployed system has drifted below a floor, this fails the run.
+        if: ${{ steps.record.outputs.budget_exhausted != 'true' }}
         run: npm run eval:replay
 
       - name: Publish run to D1 evaluation history
-        if: ${{ env.INGEST_TOKEN != '' }}
+        if: ${{ env.INGEST_TOKEN != '' && steps.record.outputs.budget_exhausted != 'true' }}
         run: npm run eval:publish
 
       - name: Warn if the run could not be published
-        if: ${{ env.INGEST_TOKEN == '' }}
+        if: ${{ env.INGEST_TOKEN == '' && steps.record.outputs.budget_exhausted != 'true' }}
         run: |
           echo "::warning::INGEST_TOKEN is unavailable — the run was not written to D1 history." \
             "On a fork this is expected; on this repository it means the secret is missing."
@@ -75,7 +93,7 @@ jobs:
       # baseline is a deliberate act: run this workflow manually with refresh_fixtures, or run
       # `npm run eval:record` locally.
       - name: Push refreshed fixtures for review
-        if: ${{ inputs.refresh_fixtures && !cancelled() }}
+        if: ${{ inputs.refresh_fixtures && steps.record.outputs.budget_exhausted != 'true' && !cancelled() }}
         run: |
           if git diff --quiet -- eval/fixtures; then
             echo "Fixtures unchanged — nothing to propose." >> "$GITHUB_STEP_SUMMARY"
@@ -115,4 +133,9 @@ jobs:
             echo "Costs ~2,500 of 10,000 free neurons/day, which is why this is nightly rather"
             echo "than per-push. Fixtures are only proposed when run manually with"
             echo "\`refresh_fixtures\`, because they carry timings that differ every run."
+            if [ "${{ steps.record.outputs.budget_exhausted }}" = "true" ]; then
+              echo ""
+              echo "**Skipped: the daily neuron allocation was already gone.** Not a regression;"
+              echo "the allocation resets at 00:00 UTC and the committed fixtures are untouched."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

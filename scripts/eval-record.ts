@@ -78,7 +78,14 @@ async function runCase(c: EvalCase): Promise<RecordedCase> {
       if (!line.startsWith("data:")) continue;
       const evt = JSON.parse(line.slice(5)) as { type: string; result?: TurnResult; message?: string };
       if (evt.type === "token") sawTokens = true;
-      if (evt.type === "error") throw new Error(`${c.id}: ${evt.message}`);
+      if (evt.type === "error") {
+        // Exhausting the daily allocation is not a quality signal, and every remaining case
+        // would fail identically. Mark it so the caller can stop and report it as what it is.
+        if (/\b4006\b|daily free allocation/i.test(evt.message ?? "")) {
+          throw new BudgetExhausted(evt.message ?? "daily neuron allocation exhausted");
+        }
+        throw new Error(`${c.id}: ${evt.message}`);
+      }
       if (evt.type === "done") result = evt.result;
     }
   }
@@ -86,6 +93,12 @@ async function runCase(c: EvalCase): Promise<RecordedCase> {
   if (!result) throw new Error(`${c.id}: stream ended without a done event`);
   return { case: c, result, generated: sawTokens || result.refusalReason === "model_declined" };
 }
+
+/** Thrown when Workers AI reports the daily free allocation is gone. */
+class BudgetExhausted extends Error {}
+
+/** Distinct from 1 so callers can separate "out of budget" from "the numbers moved". */
+const EXIT_BUDGET_EXHAUSTED = 3;
 
 async function main(): Promise<void> {
   const cases = loadCases();
@@ -103,8 +116,28 @@ async function main(): Promise<void> {
         `  ${c.id.padEnd(6)} ${String(o.retrieval[0]?.score.toFixed(3) ?? "-").padStart(6)}  ${mark}`,
       );
     } catch (error) {
+      if (error instanceof BudgetExhausted) {
+        console.error(`\n  Stopped at ${c.id}: ${error.message}`);
+        console.error(
+          "\n  The daily Workers AI allocation is gone, so no further case can run and the\n" +
+            "  existing fixture is left untouched. This is a budget condition, not a quality\n" +
+            "  regression — the allocation resets at 00:00 UTC.",
+        );
+        process.exit(EXIT_BUDGET_EXHAUSTED);
+      }
       console.error(`  ${c.id.padEnd(6)} FAILED: ${error instanceof Error ? error.message : error}`);
     }
+  }
+
+  // Written only once every case has succeeded. An incomplete recording overwriting the
+  // committed baseline would leave `eval:replay` — the gate on every pull request — measuring
+  // against nothing.
+  if (records.length < cases.length) {
+    console.error(
+      `\n  ${cases.length - records.length} of ${cases.length} case(s) failed — the existing ` +
+        `fixture is left untouched rather than replaced with a partial recording.`,
+    );
+    process.exit(1);
   }
 
   const sha = gitSha();
@@ -124,10 +157,6 @@ async function main(): Promise<void> {
   console.log(`\n  wrote ${path}  (${records.length}/${cases.length} cases, sha ${sha})`);
   console.log(`  neurons spent: ${totalNeurons(records)} of 10,000/day`);
   console.log("  next: npm run eval:publish  (writes this run to D1 — costs nothing)");
-  if (records.length < cases.length) {
-    console.error(`\n  ${cases.length - records.length} case(s) failed — fixture is incomplete.`);
-    process.exit(1);
-  }
 }
 
 await main();

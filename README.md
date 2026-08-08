@@ -198,6 +198,12 @@ Stated plainly, because a project about honest measurement should be honest abou
 - **Ambiguous questions have no automated grade.** Whether a clarifying question is *good* is a
   judgement the harness does not make; those five cases are reported, not scored.
 - **One region, one language, no load testing.** Latency figures are single-client from one place.
+- **The free allocation is shared between the demo and its own test suite.** A full recording
+  costs ~2,500 of 10,000 daily neurons, and once the allocation is gone every request hard-fails
+  until 00:00 UTC — the live page included. The nightly run was moved to just after the reset for
+  this reason, and it now stops and warns rather than failing when the budget is already spent, so
+  a budget condition never raises the same alarm as a real regression. On a busy demo day the
+  page can still run out.
 - **There is no authentication, and the session id is a bearer capability.** Conversations are
   isolated per session — a random id is minted in `localStorage` on first visit, so opening the
   public URL never shows anyone else's history — but whoever holds an id can read that
