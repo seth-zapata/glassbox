@@ -61,12 +61,21 @@ export class ChatAgent extends DurableObject<Env> {
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname.endsWith("/history")) {
+    if (url.pathname.endsWith("/history") && request.method === "GET") {
       return Response.json({ messages: this.historyWithTraces() });
     }
 
     if (url.pathname.endsWith("/traces")) {
       return Response.json({ traces: this.traces() });
+    }
+
+    if (url.pathname.endsWith("/history") && request.method === "DELETE") {
+      // A real reset rather than an abandonment. Dropping the session id client-side would
+      // orphan this object's rows, still readable by anyone holding the old id — which is a
+      // bearer capability, since there is no authentication in front of it.
+      this.ctx.storage.sql.exec("DELETE FROM messages");
+      this.ctx.storage.sql.exec("DELETE FROM turn_traces");
+      return Response.json({ cleared: true });
     }
 
     if (url.pathname.endsWith("/chat") && request.method === "POST") {

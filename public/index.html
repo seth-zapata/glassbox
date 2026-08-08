@@ -146,6 +146,7 @@
         background: var(--surface-1); white-space: nowrap;
       }
       .ghost-link:hover { color: var(--ink-1); }
+      button.ghost-link { font: inherit; font-size: 0.75rem; cursor: pointer; }
 
       main { max-width: 50rem; margin: 0 auto; padding: 1.75rem 1.25rem 9rem; }
 
@@ -313,6 +314,7 @@
         <div class="spacer"></div>
         <span class="status"><span class="dot" id="dot"></span><span id="statusText">checking…</span></span>
         <span class="budget" id="budget" hidden></span>
+        <button class="ghost-link" id="clear" type="button" title="Delete this conversation from storage and start a new session">New chat</button>
         <a class="ghost-link" href="https://github.com/seth-zapata/glassbox" rel="noopener">Source</a>
       </div>
     </div>
@@ -857,6 +859,30 @@
           statusText.textContent = "unreachable";
         }
       }
+
+      /**
+       * Delete the conversation, then take a new session id.
+       *
+       * Deleting server-side matters: simply dropping the id would leave the old object's rows
+       * in place, still readable by anyone holding that id. The new id then makes the old one
+       * unusable from this browser.
+       */
+      document.getElementById("clear").addEventListener("click", async () => {
+        const hasHistory = log.childElementCount > 0;
+        if (hasHistory && !confirm("Delete this conversation? Its evidence and verdicts are removed from storage and cannot be recovered.")) {
+          return;
+        }
+        try {
+          await fetch(`/api/history?session=${session}`, { method: "DELETE" });
+        } catch {
+          /* Deleting is best-effort; the new session id below still isolates this browser. */
+        }
+        session = crypto.randomUUID();
+        localStorage.setItem("glassbox-session", session);
+        log.replaceChildren();
+        starters.hidden = false;
+        input.focus();
+      });
 
       void health();
       void restore();
