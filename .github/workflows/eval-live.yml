@@ -7,17 +7,19 @@ name: Evaluation (live)
 # the deployed demo down with it — requests hard-fail once the budget is gone. A gate that can
 # break the service it guards is not a gate.
 #
-# The merge-blocking quality gate is Tier 1 (`ci.yml`), which replays these recordings from
-# committed fixtures for free. This workflow exists to refresh them.
+# The merge-blocking quality gate is Tier 1 (`ci.yml`), which replays committed fixtures for
+# free. This workflow answers a different question: has the *deployed* system drifted since those
+# fixtures were recorded? It records fresh, replays the fresh recording against the committed
+# floors, and fails if any floor breaks. A failure is the alarm, and failures notify.
 on:
   workflow_dispatch:
     inputs:
-      publish:
-        description: "Write the run to D1 evaluation history"
+      refresh_fixtures:
+        description: "Push the fresh recording to a branch for review"
         type: boolean
-        default: true
+        default: false
   schedule:
-    # Nightly, off-peak. Catches drift in the deployed models without anyone remembering to look.
+    # Nightly, after the 00:00 UTC neuron reset so the day's budget is intact.
     - cron: "17 9 * * *"
 
 concurrency:
@@ -26,12 +28,18 @@ concurrency:
 
 permissions:
   contents: write
-  pull-requests: write
 
 jobs:
   record:
     name: record
     runs-on: ubuntu-latest
+    env:
+      WORKER_URL: https://glassbox.glassbox.workers.dev
+      # Job level, not step level. A step's own `env:` block is not in scope for that step's own
+      # `if:` — the condition is evaluated first — so guarding on it there silently skips the
+      # step instead of running it. That is exactly how the first nightly run published nothing
+      # while reporting success.
+      INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
     steps:
       - uses: actions/checkout@v5
 
@@ -45,45 +53,55 @@ jobs:
       - name: Record against the deployed Worker
         # No Cloudflare credentials needed — recording drives the public chat endpoint, the same
         # path a user drives. That is the point of sharing one code path.
-        env:
-          WORKER_URL: https://glassbox.glassbox.workers.dev
         run: npm run eval:record
 
       - name: Replay the fresh recording against committed floors
+        # The alarm. If the deployed system has drifted below a floor, this fails the run.
         run: npm run eval:replay
 
       - name: Publish run to D1 evaluation history
-        # Only the publish step needs a secret, and it is skipped rather than failed when absent
-        # so a fork can still record and replay.
-        if: ${{ inputs.publish != false && env.INGEST_TOKEN != '' }}
-        env:
-          INGEST_TOKEN: ${{ secrets.INGEST_TOKEN }}
-          WORKER_URL: https://glassbox.glassbox.workers.dev
+        if: ${{ env.INGEST_TOKEN != '' }}
         run: npm run eval:publish
 
-      - name: Open a PR if the fixtures moved
-        # Fixtures are never committed straight to main: a change in them is a change in the
-        # numbers this project publishes, and that deserves review like any other diff.
+      - name: Warn if the run could not be published
+        if: ${{ env.INGEST_TOKEN == '' }}
+        run: |
+          echo "::warning::INGEST_TOKEN is unavailable — the run was not written to D1 history." \
+            "On a fork this is expected; on this repository it means the secret is missing."
+
+      # Fixtures are NOT auto-proposed on a schedule. They carry per-stage timings, which differ
+      # on every run, so a nightly pull request would fire every night and be almost entirely
+      # noise — and noise on a review channel trains people to ignore it. Refreshing the recorded
+      # baseline is a deliberate act: run this workflow manually with refresh_fixtures, or run
+      # `npm run eval:record` locally.
+      - name: Push refreshed fixtures for review
+        if: ${{ inputs.refresh_fixtures && !cancelled() }}
         run: |
           if git diff --quiet -- eval/fixtures; then
-            echo "fixtures unchanged — nothing to propose" >> "$GITHUB_STEP_SUMMARY"
+            echo "Fixtures unchanged — nothing to propose." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          BRANCH="eval/refresh-$(git rev-parse --short HEAD)-${GITHUB_RUN_ID}"
+          BRANCH="eval/fixture-refresh"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b "$BRANCH"
+          git checkout -B "$BRANCH"
           git add eval/fixtures
-          git commit -m "eval: refresh fixtures from live recording
+          git commit -m "eval: refresh fixtures from a live recording
 
-          Recorded against the deployed Worker by the nightly live evaluation.
-          Tier 1 replays these to gate every pull request."
-          git push origin "$BRANCH"
-          gh pr create --title "eval: refresh fixtures from live recording" \
-            --body "Automated recording. Tier 1 replay gates the merge — if a floor in \`eval/floors.json\` is breached, this PR cannot merge." \
-            --head "$BRANCH"
-        env:
-          GH_TOKEN: ${{ github.token }}
+          Recorded against the deployed Worker. Tier 1 replays these to gate every pull request,
+          so this changes the baseline every future PR is measured against."
+          # Force-push a single stable branch rather than one per run, so at most one refresh
+          # branch ever exists.
+          git push --force origin "$BRANCH"
+          {
+            echo "### Refreshed fixtures pushed"
+            echo ""
+            echo "Open a pull request: <${{ github.server_url }}/${{ github.repository }}/compare/${BRANCH}?expand=1>"
+            echo ""
+            echo "_Creating the pull request is left to a human: GitHub Actions cannot open PRs"
+            echo "unless the repository grants it that permission, and this workflow does not"
+            echo "need it._"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Summary
         if: always()
@@ -91,6 +109,10 @@ jobs:
           {
             echo "### Tier 2 — live evaluation"
             echo ""
-            echo "Recorded against the deployed Worker. Costs ~2,500 of 10,000 free neurons/day,"
-            echo "which is why this is dispatch/nightly rather than per-push."
+            echo "Recorded against the deployed Worker and replayed against \`eval/floors.json\`."
+            echo "A failure here means the deployed system drifted below a committed floor."
+            echo ""
+            echo "Costs ~2,500 of 10,000 free neurons/day, which is why this is nightly rather"
+            echo "than per-push. Fixtures are only proposed when run manually with"
+            echo "\`refresh_fixtures\`, because they carry timings that differ every run."
           } >> "$GITHUB_STEP_SUMMARY"
