@@ -127,10 +127,16 @@ part of the deliverable rather than incidental to it.
 - **`main` cannot be committed to directly.** A branch ruleset requires a pull request and a
   passing `verify` check; a direct push is rejected with `GH013`. Force-pushes and branch
   deletion are blocked too.
-- **Two CI tiers.** Tier 1 runs on every PR — typecheck and a credential scan of the committed
-  transcript today, growing to unit tests, eval-set validation, and the evaluation replay gate
-  as the code lands. No credentials and no model calls, so it runs on forks and **blocks the
-  merge**. Tier 2 runs the live evaluation against real models on demand.
+- **Two CI tiers, answering different questions.** Tier 1 runs on every PR — typecheck, unit
+  tests, corpus integrity, and the evaluation **replayed from committed fixtures** against
+  `eval/floors.json`. No credentials and no model calls, so it runs on forks and **blocks the
+  merge**. It asks: *did this change move the numbers?*
+- **Tier 2 runs nightly against the deployed Worker** and asks a different question: *has the
+  deployed system drifted since the baseline was recorded?* It records fresh, replays against the
+  same floors, fails if one breaks, and writes the run to D1 history. It does **not** propose
+  fixture updates on a schedule — fixtures carry per-stage timings that differ on every run, so a
+  nightly PR would fire every night and be almost entirely noise. Refreshing the recorded baseline
+  is deliberate: dispatch the workflow with `refresh_fixtures`, or run `npm run eval:record`.
 - **CI never claims coverage it doesn't have.** Checks are added alongside the things they
   verify, not written in advance against code that doesn't exist yet.
 - **Why the split:** the free-tier allocation is 10,000 neurons/day, and a live evaluation run
