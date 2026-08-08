@@ -131,12 +131,15 @@ part of the deliverable rather than incidental to it.
   tests, corpus integrity, and the evaluation **replayed from committed fixtures** against
   `eval/floors.json`. No credentials and no model calls, so it runs on forks and **blocks the
   merge**. It asks: *did this change move the numbers?*
-- **Tier 2 runs nightly against the deployed Worker** and asks a different question: *has the
+- **Tier 2 runs weekly against the deployed Worker** and asks a different question: *has the
   deployed system drifted since the baseline was recorded?* It records fresh, replays against the
   same floors, fails if one breaks, and writes the run to D1 history. It does **not** propose
   fixture updates on a schedule — fixtures carry per-stage timings that differ on every run, so a
   nightly PR would fire every night and be almost entirely noise. Refreshing the recorded baseline
   is deliberate: dispatch the workflow with `refresh_fixtures`, or run `npm run eval:record`.
+  Weekly rather than nightly because the deployment is fixed — day-to-day quality drift is
+  unlikely, while a daily recording reliably contended for the same free allocation the live page
+  draws on.
 - **CI never claims coverage it doesn't have.** Checks are added alongside the things they
   verify, not written in advance against code that doesn't exist yet.
 - **Why the split:** the free-tier allocation is 10,000 neurons/day, and a live evaluation run
@@ -203,7 +206,8 @@ Stated plainly, because a project about honest measurement should be honest abou
   until 00:00 UTC — the live page included. The nightly run was moved to just after the reset for
   this reason, and it now stops and warns rather than failing when the budget is already spent, so
   a budget condition never raises the same alarm as a real regression. On a busy demo day the
-  page can still run out.
+  page can still run out. The scheduled recording is weekly, just after the reset, for this
+  reason.
 - **There is no authentication, and the session id is a bearer capability.** Conversations are
   isolated per session — a random id is minted in `localStorage` on first visit, so opening the
   public URL never shows anyone else's history — but whoever holds an id can read that
