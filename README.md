@@ -207,6 +207,35 @@ transcript, and `npm run transcript:check` fails the build if anything slips thr
 
 ---
 
+## Conversations — what it does and doesn't do
+
+**Multi-turn context: yes, bounded.** Follow-ups resolve against earlier turns — ask "how long is
+that lock?" after a question about registrant changes and it carries the referent. The last
+**four messages** (two exchanges) are replayed to the model, deliberately: history competes with
+retrieved passages for a 24,000-token context window, and the passages are what ground the
+answer. Beyond two exchanges back, earlier turns are stored and displayed but not fed to the
+model.
+
+Refusals are stored and shown but **never replayed as context**. A similarity-gated refusal never
+reached the model, and a sentinel refusal was a token rather than prose, so replaying either as
+prior assistant output would invent history the model never produced — and bias it toward
+refusing again.
+
+**Resetting: yes.** *New chat* in the header deletes the conversation, its per-turn traces, and
+its evaluation history from Durable Object storage, then takes a fresh session id. Deleting
+server-side is the point: dropping the id alone would leave the old object's rows in place, still
+readable by anyone holding that id, since there is no authentication in front of it. Deletion is
+permanent — evidence and verdicts for past turns go with it.
+
+**Multiple simultaneous chats: no.** One conversation per browser, keyed by a single
+`localStorage` entry. Nothing in the backend prevents it — every session id already gets its own
+Durable Object, and the evaluation suite runs 28 of them concurrently — so this is a missing
+interface, not a missing capability. Starting a new chat ends the previous one.
+
+**Sharing or resuming a conversation elsewhere: no.** The session id never appears in the page
+URL, so a link carries nothing. Opening the site in another browser or a private window starts
+empty.
+
 ## Known limitations
 
 Stated plainly, because a project about honest measurement should be honest about itself.
