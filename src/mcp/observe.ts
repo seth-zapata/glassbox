@@ -26,6 +26,8 @@ export interface CallRecord {
   scope: string | null;
   outcome: Outcome;
   errorCode: number | null;
+  /** Protocol revision the client declared, from `_meta` or the header. Null if it declared none. */
+  protocolVersion: string | null;
   durationMs: number;
   neurons: number;
 }
@@ -34,8 +36,8 @@ export async function recordCall(db: D1Database, record: CallRecord, at: number)
   await db
     .prepare(
       `INSERT INTO mcp_calls (id, called_at, method, tool, era, scope, outcome, error_code,
-         duration_ms, neurons)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         duration_ms, neurons, protocol_version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       crypto.randomUUID(),
@@ -48,6 +50,7 @@ export async function recordCall(db: D1Database, record: CallRecord, at: number)
       record.errorCode,
       record.durationMs,
       record.neurons,
+      record.protocolVersion,
     )
     .run();
 }
@@ -77,7 +80,8 @@ export async function successfulCallsSince(
 export async function listCalls(db: D1Database, limit = 100): Promise<unknown[]> {
   const { results } = await db
     .prepare(
-      `SELECT id, called_at, method, tool, era, scope, outcome, error_code, duration_ms, neurons
+      `SELECT id, called_at, method, tool, era, scope, outcome, error_code, duration_ms, neurons,
+              protocol_version
          FROM mcp_calls ORDER BY called_at DESC LIMIT ?`,
     )
     .bind(limit)

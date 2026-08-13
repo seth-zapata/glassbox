@@ -105,18 +105,46 @@ export function metaVersion(body: RpcRequest): string | undefined {
 }
 
 /**
+ * Is this protocol version a modern (per-request metadata) one?
+ *
+ * Protocol versions are ISO 8601 dates, which sort lexicographically, so a string comparison is a
+ * chronological one. That matters for revisions released after this code was written: a client
+ * declaring 2027-01-01 is treated as modern and answered with an UnsupportedProtocolVersionError
+ * naming what we do speak, rather than being silently misread as legacy and failing obscurely.
+ */
+export function isModernVersion(version: string): boolean {
+  return version >= MODERN_VERSION;
+}
+
+/**
  * Which era the client is speaking.
  *
- * The specification defines this from how the client opens: a request carrying modern per-request
- * metadata is served statelessly under the modern revision; an `initialize` request selects legacy
- * semantics. Everything else — a legacy client's `tools/list`, which carries neither the headers
- * nor `_meta` — falls to legacy, which is safe precisely because this server holds no session
- * state either way.
+ * **`MCP-Protocol-Version` is not a modern marker.** It was introduced in revision 2025-06-18 —
+ * a legacy revision — so every legacy client from that revision onward sends it on requests after
+ * the handshake. An earlier version of this function treated the header's mere presence as modern,
+ * which produced a bug no conformance test could catch: MCP Inspector's `initialize` succeeded on
+ * the legacy path, and then its very next request was rejected with a HeaderMismatch demanding
+ * `_meta` that a legacy client has no reason to send. Both halves conformed; the interaction did
+ * not.
+ *
+ * The only unambiguous modern markers are `_meta` carrying a protocol version, or a header
+ * declaring a version at or after the modern revision.
  */
 export function detectEra(headers: Headers, body: RpcRequest): Era {
-  if (headers.get("mcp-protocol-version") !== null) return "modern";
   if (metaVersion(body) !== undefined) return "modern";
+  const header = headers.get("mcp-protocol-version");
+  if (header !== null && isModernVersion(header)) return "modern";
   return "legacy";
+}
+
+/**
+ * The protocol version the client declared, from either carrier.
+ *
+ * Recorded against every call so "which era do real clients actually speak" is answered by data
+ * rather than by reading changelogs — the question that produced the bug above.
+ */
+export function declaredVersion(headers: Headers, body: RpcRequest): string | null {
+  return metaVersion(body) ?? headers.get("mcp-protocol-version") ?? null;
 }
 
 /** Methods whose `Mcp-Name` header mirrors a body field, and which field that is. */

@@ -178,7 +178,7 @@ const retrieveTool: ToolDefinition = {
     "their cosine similarity scores, without generating an answer. Use this to inspect what the " +
     "agent would ground an answer on, or to compare how similar in-corpus and out-of-corpus " +
     "questions score. Reports whether the top score clears the similarity refusal gate. Costs " +
-    "about 0.09 neurons per call (embedding only) and makes no generation call.",
+    "about 0.07 neurons per call (embedding only) and makes no generation call.",
   inputSchema: {
     type: "object",
     properties: {
