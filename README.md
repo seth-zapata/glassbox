@@ -113,6 +113,14 @@ very margin.
 
 The judge dominates. It runs after the answer has fully streamed, so it never delays reading.
 
+**Read the p95 column with suspicion — this one included.** It is computed from 28 single-shot
+samples in one recording, which makes it closer to "the second-slowest case that day" than to a
+property of the system. Recording the same 28 cases again against the same deployment measured a
+judge p95 of **62,503 ms** against the 6,628 above, and a total p95 of 24,505 against 6,621 —
+while p50 moved only from 3,390 to 3,716. The median is stable across runs; the tail is not,
+because `gpt-oss-20b` has a heavy one. Both recordings time each stage inside the Durable Object,
+so that spread is inference latency rather than a client's network path.
+
 ---
 
 ## Required components → where they live
@@ -240,8 +248,14 @@ empty.
 
 Stated plainly, because a project about honest measurement should be honest about itself.
 
-- **Neuron cost is estimated, not billed.** It is computed from the token counts Workers AI
-  returns times published per-model rates, not read back from Cloudflare's billing.
+- **Per-turn neuron cost is estimated, not billed — though the estimate has now been checked
+  once.** The figure in the evaluation panel is computed from the token counts Workers AI returns
+  times published per-model rates, not read back from Cloudflare's billing. (The header gauge is
+  the opposite: measured from analytics, never estimated.) Because those are independent paths,
+  they can be compared. A live recording started against an empty rolling window reported
+  **2,482.2** neurons from token counts while `aiInferenceAdaptiveGroups` measured **2,482.3** for
+  the same window. One comparison at one workload is not a calibration, and a differently shaped
+  workload could still diverge — but on this one the derived figure is not drifting.
 - **The eval set is 28 cases, written by the same person who built the system.** That is enough
   to catch regressions and to expose the score-overlap result; it is not a benchmark, and it
   shares an author's blind spots with the thing it measures.
