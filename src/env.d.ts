@@ -12,4 +12,8 @@ interface Env {
   CF_ANALYTICS_TOKEN?: string;
   /** Account tag the analytics query filters on. */
   CF_ACCOUNT_TAG?: string;
+  /** MCP bearer token granting the read scope — the tools that spend nothing. */
+  MCP_TOKEN_READ?: string;
+  /** MCP bearer token granting the full scope, including the tool that spends neurons. */
+  MCP_TOKEN_FULL?: string;
 }

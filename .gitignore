@@ -8,9 +8,13 @@ dist/
 *.log
 .DS_Store
 
-# Private planning document — referenced during scoping, not part of this project
+# Private planning documents — referenced during scoping, not part of this project
 ASSIGNMENT_SPEC.md
 cloudflare_registrar_assignment_spec.md
+docs/glassbox_mcp_server.md
+
+# WSL download artifacts
+*:Zone.Identifier
 
 # Redaction phrase list — would restate the content it removes
 scripts/redactions.local.json

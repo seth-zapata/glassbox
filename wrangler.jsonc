@@ -10,8 +10,16 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*"]
+    // /mcp is listed explicitly: without it the asset store would answer the MCP endpoint with a
+    // 404 and the Worker would never run.
+    "run_worker_first": ["/api/*", "/mcp"]
   },
+
+  // Bundles the committed evaluation set as text so the MCP `list_eval_cases` tool reads the
+  // same file the harness measures against, rather than a copy that can drift from it.
+  "rules": [
+    { "type": "Text", "globs": ["**/*.jsonl"], "fallthrough": true }
+  ],
 
   "ai": { "binding": "AI" },
 
