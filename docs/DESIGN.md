@@ -484,10 +484,25 @@ whose correctness we most want to demonstrate. The modern path is a single POST 
 the dispatch is also what makes per-call observability a byproduct rather than a bolt-on.
 
 The conformance risk of hand-writing a protocol is real and is answered the way this repo answers
-everything: 49 unit tests over the pure `(headers, body)` logic, running free on every PR, plus a
-21-check live smoke test. The rejection paths — header mismatch, unsupported version, wrong scope,
-unknown method — are the ones a well-behaved client never exercises and the ones the specification
-writes as MUSTs.
+everything: unit tests over the pure `(headers, body)` logic, running free on every PR, plus a
+live smoke test. The rejection paths — header mismatch, unsupported version, wrong scope, unknown
+method — are the ones a well-behaved client never exercises and the ones the specification writes
+as MUSTs.
+
+**And that was not sufficient.** ✅ Measured 2026-08-12: the first real client, MCP Inspector,
+failed on its second request. `MCP-Protocol-Version` was introduced in revision 2025-06-18 — a
+*legacy* revision — so legacy clients send it after the handshake, and era detection had treated
+its presence as a modern marker. `initialize` succeeded on the legacy path; `notifications/
+initialized` was then rejected with `-32020` for lacking `_meta` a legacy client never sends.
+
+The lesson is specific and worth keeping: **the conformance suite validated every request in
+isolation, and the fault lived in the transition between two individually valid requests.** No
+amount of per-request testing would have found it. The true modern markers are `_meta` carrying a
+protocol version, or a header naming a version at or after the modern revision — compared
+lexicographically, which is chronological for ISO dates and therefore correct for revisions
+released after this code was written. There is a regression test named after the bug, and
+`mcp_calls` now records the version each caller declares so "which era do real clients speak" is a
+query rather than an inference. The answer today is `2025-11-25`, legacy, every time.
 
 **The scope boundary is cost, not secrecy.** Every document reachable through these tools is
 public Cloudflare Registrar documentation and every number is already in the README; there is

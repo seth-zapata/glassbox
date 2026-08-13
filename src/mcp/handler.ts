@@ -17,6 +17,7 @@ import {
   LEGACY_VERSION,
   SUPPORTED_VERSIONS,
   RpcError,
+  declaredVersion,
   detectEra,
   isNotification,
   originRejected,
@@ -84,11 +85,12 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   const body = raw as RpcRequest;
   const id = body.id ?? null;
   const era = detectEra(request.headers, body);
+  const version = declaredVersion(request.headers, body);
 
   if (era === "modern") {
     const headerFailure = validateModernHeaders(request.headers, body);
     if (headerFailure) {
-      await record(env, body.method, null, era, null, "protocol_error", headerFailure.code, startedAt, 0);
+      await record(env, body.method, null, era, null, "protocol_error", headerFailure.code, startedAt, 0, version);
       return failureResponse(id, headerFailure);
     }
   }
@@ -97,7 +99,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
   // notifications, but legacy clients still send `notifications/initialized` after the handshake,
   // and dropping it on the floor with 202 is exactly right.
   if (isNotification(body)) {
-    await record(env, body.method, null, era, null, "ok", null, startedAt, 0);
+    await record(env, body.method, null, era, null, "ok", null, startedAt, 0, version);
     return new Response(null, { status: 202 });
   }
 
@@ -112,6 +114,7 @@ export async function handleMcp(request: Request, env: Env): Promise<Response> {
     dispatch.errorCode,
     startedAt,
     dispatch.neurons,
+    version,
   );
 
   return jsonResponse(dispatch.status, dispatch.body);
@@ -380,11 +383,22 @@ async function record(
   errorCode: number | null,
   startedAt: number,
   neurons: number,
+  protocolVersion: string | null,
 ): Promise<void> {
   try {
     await recordCall(
       env.DB,
-      { method, tool, era, scope, outcome, errorCode, durationMs: Date.now() - startedAt, neurons },
+      {
+        method,
+        tool,
+        era,
+        scope,
+        outcome,
+        errorCode,
+        protocolVersion,
+        durationMs: Date.now() - startedAt,
+        neurons,
+      },
       startedAt,
     );
   } catch (error) {

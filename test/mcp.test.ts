@@ -23,8 +23,10 @@ import {
   SUPPORTED_VERSIONS,
   META_VERSION_KEY,
   RpcError,
+  declaredVersion,
   decodeHeaderValue,
   detectEra,
+  isModernVersion,
   isNotification,
   metaVersion,
   originRejected,
@@ -98,12 +100,36 @@ describe("decodeHeaderValue", () => {
 // ── era detection ─────────────────────────────────────────────────────────────────────────────
 
 describe("detectEra", () => {
-  test("treats a request carrying the protocol header as modern", () => {
+  test("treats a request carrying a modern protocol header as modern", () => {
     assert.equal(detectEra(modernHeaders(), modernCall()), "modern");
   });
 
   test("treats a request carrying only _meta as modern", () => {
     assert.equal(detectEra(headers({}), modernCall()), "modern");
+  });
+
+  test("REGRESSION: a legacy client's post-handshake header is not a modern marker", () => {
+    // MCP Inspector found this. `MCP-Protocol-Version` was introduced in revision 2025-06-18 — a
+    // legacy revision — so legacy clients send it on every request after `initialize`. Treating
+    // its presence as modern made the handshake succeed and then rejected the very next request
+    // with a HeaderMismatch demanding `_meta` that no legacy client sends. Both halves conformed
+    // individually; only the sequence was broken, which is why the conformance suite passed.
+    const body: RpcRequest = { jsonrpc: "2.0", method: "notifications/initialized" };
+    const h = headers({ "mcp-protocol-version": LEGACY_VERSION });
+    assert.equal(detectEra(h, body), "legacy");
+  });
+
+  test("a legacy tools/list carrying the legacy version header stays legacy", () => {
+    const body: RpcRequest = { jsonrpc: "2.0", id: 3, method: "tools/list" };
+    assert.equal(detectEra(headers({ "mcp-protocol-version": LEGACY_VERSION }), body), "legacy");
+  });
+
+  test("a version newer than this build is treated as modern, not misread as legacy", () => {
+    // Protocol versions are ISO dates, so the comparison is chronological. A future client gets
+    // an UnsupportedProtocolVersionError naming what we speak, rather than falling into the
+    // legacy path and failing somewhere less informative.
+    const body: RpcRequest = { jsonrpc: "2.0", id: 4, method: "tools/list" };
+    assert.equal(detectEra(headers({ "mcp-protocol-version": "2027-01-01" }), body), "modern");
   });
 
   test("treats a bare initialize as legacy", () => {
@@ -114,6 +140,34 @@ describe("detectEra", () => {
   test("treats a legacy tools/list — no headers, no _meta — as legacy", () => {
     const body: RpcRequest = { jsonrpc: "2.0", id: 2, method: "tools/list" };
     assert.equal(detectEra(headers({}), body), "legacy");
+  });
+});
+
+describe("isModernVersion", () => {
+  test("the modern revision and anything after it", () => {
+    assert.equal(isModernVersion(MODERN_VERSION), true);
+    assert.equal(isModernVersion("2027-01-01"), true);
+  });
+
+  test("every handshake-based revision", () => {
+    assert.equal(isModernVersion(LEGACY_VERSION), false);
+    assert.equal(isModernVersion("2025-06-18"), false);
+    assert.equal(isModernVersion("2024-11-05"), false);
+  });
+});
+
+describe("declaredVersion", () => {
+  test("prefers _meta, which is the authoritative carrier", () => {
+    assert.equal(declaredVersion(modernHeaders(), modernCall()), MODERN_VERSION);
+  });
+
+  test("falls back to the header when the body carries none", () => {
+    const body: RpcRequest = { jsonrpc: "2.0", id: 1, method: "tools/list" };
+    assert.equal(declaredVersion(headers({ "mcp-protocol-version": LEGACY_VERSION }), body), LEGACY_VERSION);
+  });
+
+  test("is null when the client declares nothing", () => {
+    assert.equal(declaredVersion(headers({}), { jsonrpc: "2.0", id: 1, method: "initialize" }), null);
   });
 });
 

@@ -287,11 +287,37 @@ modern-only server **fails**, with no fall-forward — and every client shipping
 
 | Client opens with | Served as | Result |
 |---|---|---|
-| `_meta` + `MCP-Protocol-Version` | modern, stateless | ✅ |
+| `_meta` + a modern `MCP-Protocol-Version` | modern, stateless | ✅ |
 | `initialize` | legacy handshake | ✅ |
 | `GET` / `DELETE` (old session and stream mechanics) | — | `405`, as specified |
 | Header disagreeing with body | — | `400` + `-32020` |
 | Unsupported version | — | `400` + `-32022` with the supported list |
+
+### What a real client actually negotiates
+
+The first real client pointed at this server — **MCP Inspector** — broke it, and the failure is
+worth publishing rather than quietly fixing.
+
+`MCP-Protocol-Version` is *not* a modern marker. It was introduced in revision **2025-06-18**, a
+legacy revision, so legacy clients send it on every request after the handshake. The era detector
+treated its presence as modern. The result: `initialize` succeeded on the legacy path, and the very
+next request — `notifications/initialized` — was rejected with `-32020` demanding `_meta` that no
+legacy client has any reason to send.
+
+**Both halves were individually conformant. Only the sequence was wrong**, which is exactly why 49
+passing conformance tests said nothing about it: each request was checked in isolation, and the
+bug lived in the transition between them. There is now a regression test named after it, and the
+call log records the version each caller declares so the question is answered by query instead of
+by reading changelogs.
+
+Measured after the fix, from [`/api/mcp/history`](https://glassbox.glassbox.workers.dev/api/mcp/history):
+
+| Client | Declares | Served as | `initialize` → `notifications/initialized` → `tools/list` → `tools/call` |
+|---|---|---|---|
+| MCP Inspector | `2025-11-25` | legacy | ✅ ✅ ✅ ✅ |
+
+Every real exchange so far has been legacy. The modern path still has no client to prove it
+against — see the limitations below.
 
 No SDK. The server transports in `@modelcontextprotocol/sdk` are Node-shaped and lag the revision,
 and the Workers-native `McpAgent` would put a framework at the centre of the one surface whose
@@ -333,13 +359,15 @@ Stated plainly, because a project about honest measurement should be honest abou
   stops and warns rather than failing when the budget is already spent, so a budget condition
   never raises the same alarm as a real regression. On a busy day the page can still run out; when
   it does, the page says so and projects when it returns.
-- **The MCP server's modern path is specification-tested, not client-tested.** This is the
-  uncomfortable one. Revision `2026-07-28` is new enough that no widely-available client speaks it
-  yet, so the modern era is verified against the written specification and this repository's own
-  conformance suite — which is exactly the circular check the rest of this project argues against.
-  The path real clients will actually take today is the *legacy* handshake, which is the less
-  interesting half of the implementation. Until a modern client exists to test against, treat the
-  ✅ in the era table as "conforms to the spec as read", not "known to interoperate".
+- **The MCP server's modern path is specification-tested, not client-tested — and that gap has
+  already cost one bug.** Revision `2026-07-28` is new enough that no widely-available client
+  speaks it: MCP Inspector declares `2025-11-25` and is served as legacy, which is the only era
+  any real exchange here has used. So the modern path is verified against the written
+  specification and this repository's own conformance suite, which is the circular check the rest
+  of this project argues against. It is not hypothetical: the first real client immediately found
+  an era-detection bug that 49 passing conformance tests had not, because the tests checked each
+  request in isolation and the fault was in the sequence. Treat the modern ✅ as "conforms to the
+  spec as read", not "known to interoperate".
 - **The MCP server implements tools only, and only unary tools.** No resources, no prompts, no
   streamed tool output: `subscriptions/listen` and the multi-round-trip input requests that
   replaced server-initiated sampling are not implemented. A tool that wanted to report progress
