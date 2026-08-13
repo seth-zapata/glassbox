@@ -454,6 +454,52 @@ underneath a framework that is doing the coordinating.
 
 *Revisit if:* multi-client state sync or scheduled work enters scope. Neither is planned.
 
+### Decision 9 — Hand-written dual-era MCP, not an SDK
+
+Added 2026-08-12, when the agent-facing surface went in.
+
+**The protocol moved, and most available guidance describes the old one.** MCP revision
+`2026-07-28` removed the `initialize` handshake, protocol-level sessions (`Mcp-Session-Id`), the
+standalone GET/SSE stream, server-initiated JSON-RPC requests, and `Last-Event-ID` resumability.
+A modern request instead carries its own protocol version and client capabilities in
+`params._meta`, mirrored into `MCP-Protocol-Version` / `Mcp-Method` / `Mcp-Name` headers that the
+server **must** validate against the body. This was read from the specification rather than
+recalled, because everything a model has memorised — and most tutorials — describe the previous
+shape.
+
+That rewrite is what makes a Worker a good host. Stateless POST in, single JSON object out, no
+session store, no stream to hold open.
+
+**Dual-era, because modern-only would connect to nothing.** The specification's own compatibility
+matrix says a legacy client against a modern-only server *fails*, and legacy clients have no
+fall-forward mechanism. Every MCP client shipping today opens with `initialize`. So the server
+selects behaviour from how the client opens: `_meta` or the protocol header ⇒ modern stateless
+path; `initialize` ⇒ legacy. Both are stateless here, which is what makes supporting two eras
+cheap rather than a second implementation.
+
+**Why not an SDK.** `@modelcontextprotocol/sdk`'s server transports are Node-shaped (express,
+`node:http`) and lag a draft revision. The Workers-native alternative is the `agents` package's
+`McpAgent`, which contradicts Decision 8 and puts a framework at the centre of the one surface
+whose correctness we most want to demonstrate. The modern path is a single POST handler; owning
+the dispatch is also what makes per-call observability a byproduct rather than a bolt-on.
+
+The conformance risk of hand-writing a protocol is real and is answered the way this repo answers
+everything: 49 unit tests over the pure `(headers, body)` logic, running free on every PR, plus a
+21-check live smoke test. The rejection paths — header mismatch, unsupported version, wrong scope,
+unknown method — are the ones a well-behaved client never exercises and the ones the specification
+writes as MUSTs.
+
+**The scope boundary is cost, not secrecy.** Every document reachable through these tools is
+public Cloudflare Registrar documentation and every number is already in the README; there is
+nothing to withhold. What is scarce is the 10,000 neurons/day the live page also draws on. So the
+privileged scope holds exactly the tools that spend — currently one — and the rate limit counts
+rows in the published `mcp_calls` table rather than keeping a private counter, so the limit can be
+audited rather than trusted. This is the same rationale that guards `/api/admin/ingest`, made
+explicit.
+
+*Revisit if:* a client needs streamed tool output (`subscriptions/listen`, MRTR input requests), or
+legacy-era clients disappear and the handshake path can be deleted.
+
 ---
 
 ## 5b. ✅ Measured 2026-08-07 — τ is not the artifact. The sentinel gate is.

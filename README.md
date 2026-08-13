@@ -244,6 +244,61 @@ interface, not a missing capability. Starting a new chat ends the previous one.
 URL, so a link carries nothing. Opening the site in another browser or a private window starts
 empty.
 
+## MCP server — the same evidence, for agents
+
+**Endpoint:** `POST https://glassbox.glassbox.workers.dev/mcp` · **Call log:**
+[`/api/mcp/history`](https://glassbox.glassbox.workers.dev/api/mcp/history)
+
+The corpus, the retrieval scores, and the evaluation history are reachable over the Model Context
+Protocol, so an agent can investigate this system the way the browser panel lets a person do it.
+Answers arrive with their evidence attached, not as prose to be taken on trust.
+
+| Tool | Scope | Cost | What it returns |
+|---|---|---|---|
+| `glassbox_retrieve` | read | ~0.07 neurons | Passages and cosine similarity scores, no generation. Reports whether the top score clears τ. |
+| `glassbox_compare_runs` | read | free | Two evaluation runs diffed — metric deltas **and the specific cases** whose refusal, reason, faithfulness, or retrieval rank changed. |
+| `glassbox_list_eval_cases` | read | free | The 28 committed cases, read from the same `eval-set.jsonl` the harness measures against. |
+| `glassbox_budget` | read | free | The live allocation, over the window that is actually enforced. |
+| `glassbox_ask` | **full** | ~100 neurons | Answer + evidence + judge verdict + per-stage latency. |
+
+### The scope boundary is cost, not secrecy
+
+Everything here is public documentation and already-published numbers. There is nothing to
+withhold. What is scarce is 10,000 neurons per rolling 24 hours, shared with the live page — so
+the privileged scope holds exactly the tools that spend it, and `glassbox_ask` is the only one.
+`tools/list` is scope-filtered, so a read-scoped agent is never shown a tool it would be refused
+for calling.
+
+The rate limit (20 successful `glassbox_ask` calls per rolling hour) is a `COUNT` over the same
+`mcp_calls` rows the history endpoint publishes, not a private counter — so the limit can be
+audited instead of trusted. A privileged call also pre-checks the budget and declines with the
+projected recovery time rather than failing upstream.
+
+### Two protocol eras, because one would connect to nothing
+
+MCP revision **2026-07-28** removed the `initialize` handshake, protocol sessions, the GET stream,
+server-initiated requests, and stream resumability; a modern request carries its version and
+capabilities in `_meta`, mirrored into headers the server must validate against the body. That
+rewrite is why a stateless Worker is a good host for this.
+
+It is also a trap: the specification's compatibility matrix states that a legacy client against a
+modern-only server **fails**, with no fall-forward — and every client shipping today opens with
+`initialize`. So the server answers both, selecting from how the client opens. Verified live:
+
+| Client opens with | Served as | Result |
+|---|---|---|
+| `_meta` + `MCP-Protocol-Version` | modern, stateless | ✅ |
+| `initialize` | legacy handshake | ✅ |
+| `GET` / `DELETE` (old session and stream mechanics) | — | `405`, as specified |
+| Header disagreeing with body | — | `400` + `-32020` |
+| Unsupported version | — | `400` + `-32022` with the supported list |
+
+No SDK. The server transports in `@modelcontextprotocol/sdk` are Node-shaped and lag the revision,
+and the Workers-native `McpAgent` would put a framework at the centre of the one surface whose
+correctness most wants demonstrating — see [`docs/DESIGN.md`](docs/DESIGN.md) Decision 9. The
+protocol is 49 free unit tests over pure `(headers, body)` logic in Tier 1, plus a 21-check live
+smoke test.
+
 ## Known limitations
 
 Stated plainly, because a project about honest measurement should be honest about itself.
@@ -278,6 +333,21 @@ Stated plainly, because a project about honest measurement should be honest abou
   stops and warns rather than failing when the budget is already spent, so a budget condition
   never raises the same alarm as a real regression. On a busy day the page can still run out; when
   it does, the page says so and projects when it returns.
+- **The MCP server's modern path is specification-tested, not client-tested.** This is the
+  uncomfortable one. Revision `2026-07-28` is new enough that no widely-available client speaks it
+  yet, so the modern era is verified against the written specification and this repository's own
+  conformance suite — which is exactly the circular check the rest of this project argues against.
+  The path real clients will actually take today is the *legacy* handshake, which is the less
+  interesting half of the implementation. Until a modern client exists to test against, treat the
+  ✅ in the era table as "conforms to the spec as read", not "known to interoperate".
+- **The MCP server implements tools only, and only unary tools.** No resources, no prompts, no
+  streamed tool output: `subscriptions/listen` and the multi-round-trip input requests that
+  replaced server-initiated sampling are not implemented. A tool that wanted to report progress
+  mid-call could not. Nothing in the surface needs it yet, which is why it is absent.
+- **MCP auth is a shared bearer token per scope, not OAuth.** There is no per-user identity, so
+  the call log attributes a call to a scope and never to a caller, and revoking access means
+  rotating a secret everyone shares. The rate limit is correspondingly global rather than
+  per-client — one noisy holder of the full token can consume the hourly allowance for all of them.
 - **There is no authentication, and the session id is a bearer capability.** Conversations are
   isolated per session — a random id is minted in `localStorage` on first visit, so opening the
   public URL never shows anyone else's history — but whoever holds an id can read that
